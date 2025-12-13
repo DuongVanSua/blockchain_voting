@@ -1,0 +1,35 @@
+{
+  "name": "voting-system-smartcontracts",
+  "version": "1.0.0",
+  "description": "Smart contracts for blockchain voting system",
+  "main": "index.js",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "node": "hardhat node",
+    "generate-account": "node scripts/generate-account.js",
+    "deploy:hardhat": "hardhat run scripts/deploy-local.js --network hardhat",
+    "deploy:localhost": "hardhat run scripts/deploy.js --network localhost",
+    "deploy:local": "hardhat run scripts/deploy-local.js --network hardhat",
+    "deploy:sepolia": "hardhat run scripts/deploy.js --network sepolia",
+    "clean": "hardhat clean",
+    "copy-abi": "node scripts/copy-abi.js",
+    "build": "npm run compile && npm run copy-abi"
+  },
+  "keywords": [
+    "blockchain",
+    "voting",
+    "solidity",
+    "hardhat"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "hardhat": "^2.19.0"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "ipfs-http-client": "^56.0.3"
+  }
+}

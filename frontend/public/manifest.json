@@ -1,0 +1,10 @@
+{
+  "name": "Blockchain Voting System",
+  "short_name": "Voting",
+  "description": "Hệ thống Bầu cử Phi tập trung bằng Blockchain",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2563eb"
+}
+

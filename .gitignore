@@ -1,0 +1,77 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.installed.cfg
+*.egg
+venv/
+env/
+ENV/
+.venv
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Build artifacts
+build/
+*.log
+logs/
+
+# IDE
+.vscode/*
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Blockchain
+deployments/*/private_keys.json
+deployments/*/mnemonic.txt
+.brownie/
+.ape/
+*.vyc
+.wallet_encryption_key
+
+# IPFS
+ipfs/data/
+ipfs_config_cors.json
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+
+# Hardhat
+cache/
+artifacts/
+
+# Frontend build
+frontend/dist/
+
+# Backend
+backend/venv/
