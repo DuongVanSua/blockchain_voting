@@ -641,11 +641,13 @@ router.get('/elections/:electionAddress', async (req, res) => {
         });
 
         if (dbCandidates.length > 0) {
-          // Get vote counts from contract
+          // Get vote counts from contract using candidateId (1-based)
           try {
             for (let i = 0; i < dbCandidates.length; i++) {
               try {
-                const contractCandidate = await election.candidates(i);
+                // candidateIndex is 0-based, convert to candidateId (1-based) for contract lookup
+                const candidateId = dbCandidates[i].candidateIndex + 1;
+                const contractCandidate = await election.candidates(candidateId);
                 dbCandidates[i].voteCount = contractCandidate.voteCount.toString();
               } catch (voteError) {
                 // Keep database value
@@ -655,33 +657,41 @@ router.get('/elections/:electionAddress', async (req, res) => {
             // Continue with database values
           }
 
-          candidates = dbCandidates.map(c => ({
-            id: c.candidateIndex,
-            candidateId: c.candidateIndex,
-            name: c.name,
-            party: c.party,
-            age: c.age.toString(),
-            manifesto: c.manifesto,
-            description: c.description || '',
-            imageCid: c.imageCid,
-            imageUrl: c.imageUrl,
-            voteCount: c.voteCount.toString()
-          }));
+          // Map database candidates - candidateIndex is 0-based, but contract uses 1-based candidateId
+          // Convert candidateIndex (0-based) to candidateId (1-based) by adding 1
+          // This matches the contract's candidateId which starts from 1
+          candidates = dbCandidates.map(c => {
+            // candidateIndex from database is 0-based (0, 1, 2...)
+            // Contract candidateId is 1-based (1, 2, 3...)
+            const candidateId = c.candidateIndex + 1;
+            
+            return {
+              id: candidateId,
+              candidateId: candidateId, // Use 1-based candidateId (candidateIndex + 1)
+              name: c.name,
+              party: c.party,
+              age: c.age.toString(),
+              manifesto: c.manifesto,
+              description: c.description || '',
+              imageCid: c.imageCid,
+              imageUrl: c.imageUrl,
+              voteCount: c.voteCount.toString()
+            };
+          });
         } else {
           // Fallback: Get from contract
           try {
-            for (let i = 0; i < totalCandidates; i++) {
-              const candidate = await election.candidates(i);
-              candidates.push({
-                id: i,
-                candidateId: i,
-                name: candidate.name,
-                party: candidate.party,
-                age: candidate.age.toString(),
-                manifesto: candidate.manifesto,
-                voteCount: candidate.voteCount.toString()
-              });
-            }
+            // Use getAllCandidates to get proper candidateId (1-based) from contract
+            const contractCandidates = await election.getAllCandidates();
+            candidates = contractCandidates.map(candidate => ({
+              id: Number(candidate.candidateId),
+              candidateId: Number(candidate.candidateId), // Use candidateId from contract (1-based)
+              name: candidate.name,
+              party: candidate.party,
+              age: candidate.age.toString(),
+              manifesto: candidate.manifesto,
+              voteCount: candidate.voteCount.toString()
+            }));
 
             // Try to get metadata from IPFS
             if (electionRecord.ipfsHash) {

@@ -559,15 +559,26 @@ const VoterDashboardRBAC = () => {
         return;
       }
       
+      // Ensure candidateId is a valid number >= 1
+      // Contract requires candidateId > 0, and candidates start from ID 1
+      const candidateIdNumber = typeof candidateId === 'string' ? parseInt(candidateId, 10) : Number(candidateId);
+      
+      if (isNaN(candidateIdNumber) || candidateIdNumber < 1) {
+        toast.error(`Invalid candidate ID: ${candidateId}. Candidate ID must be >= 1.`);
+        setVoting(null);
+        return;
+      }
+      
       // eslint-disable-next-line no-console
       console.log('[handleVote] Calling vote on contract:', {
         electionAddress,
-        candidateId,
+        candidateId: candidateIdNumber,
+        originalCandidateId: candidateId,
         signerAddress,
         isVoterInContract
       });
       
-      const tx = await contract.vote(candidateId, voteHash);
+      const tx = await contract.vote(candidateIdNumber, voteHash);
       // eslint-disable-next-line no-console
       console.log('[handleVote] Transaction sent:', tx.hash);
       const receipt = await tx.wait();

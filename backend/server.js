@@ -45,10 +45,20 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
 // Rate limiting
+// In development, use higher limit or disable; in production, use stricter limit
+const isDevelopment = process.env.NODE_ENV !== 'production';
 const limiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
-  max: process.env.RATE_LIMIT_PER_MINUTE || 100,
+  max: isDevelopment 
+    ? (process.env.RATE_LIMIT_PER_MINUTE ? parseInt(process.env.RATE_LIMIT_PER_MINUTE) : 20000) // 1000 requests/min in dev
+    : (process.env.RATE_LIMIT_PER_MINUTE ? parseInt(process.env.RATE_LIMIT_PER_MINUTE) : 20000), // 100 requests/min in prod
   message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  skip: (req) => {
+    // Skip rate limiting for health checks
+    return req.path === '/health';
+  }
 });
 
 app.use('/api/', limiter);
