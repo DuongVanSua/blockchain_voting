@@ -23,16 +23,15 @@ const useAuthStore = create(
 
             apiService.setToken(accessToken);
             
-            // Get full user data from database to ensure wallet_address is up-to-date
-            let fullUserData = response.user;
-            try {
-              const currentUserResponse = await apiService.getCurrentUser();
-              if (currentUserResponse.success && currentUserResponse.user) {
-                fullUserData = currentUserResponse.user;
-              }
-            } catch (err) {
-              console.warn('Failed to fetch full user data, using login response:', err);
-            }
+            // Use role from login response (most up-to-date from database)
+            // Don't fetch from /api/auth/me immediately as it may have cached data
+            // The login response already has the latest role from database
+            const fullUserData = response.user;
+            
+            // eslint-disable-next-line no-console
+            console.log('[useAuthStore] Login response user:', fullUserData);
+            // eslint-disable-next-line no-console
+            console.log('[useAuthStore] User role from login:', fullUserData.role);
 
             set({
               user: fullUserData,

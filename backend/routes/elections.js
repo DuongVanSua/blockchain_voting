@@ -13,7 +13,7 @@ router.use(authenticate);
 router.get('/', [
   query('page').optional().isInt({ min: 1 }),
   query('limit').optional().isInt({ min: 1, max: 100 }),
-  query('status').optional().isIn(['UPCOMING', 'LIVE', 'CLOSED', 'CANCELLED']),
+  query('status').optional().isIn(['ONGOING', 'PAUSED']),
 ], async (req, res) => {
   try {
     const { page = 1, limit = 100, status, createdBy } = req.query;

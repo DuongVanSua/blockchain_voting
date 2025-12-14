@@ -3,25 +3,31 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import apiService from '../../services/apiService';
 import { ipfsService } from '../../services/ipfsService';
+import contractService from '../../services/contractService';
+import useWallet from '../../hooks/useWallet';
 import Card from '../../components/common/Card';
 import Button from '../../components/common/Button';
 import Badge from '../../components/common/Badge';
 import Modal from '../../components/common/Modal';
 import Skeleton from '../../components/common/Skeleton';
 import EmptyState from '../../components/common/EmptyState';
+import WalletGuard from '../../components/wallet/WalletGuard';
 
 const CreatorDashboard = () => {
   const navigate = useNavigate();
+  const wallet = useWallet();
   const [elections, setElections] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showManageVoters, setShowManageVoters] = useState(null);
   const [showEndElection, setShowEndElection] = useState(null);
-  const [newVoterAddress, setNewVoterAddress] = useState('');
   const [isAddingVoter, setIsAddingVoter] = useState(false);
   const [electionVoters, setElectionVoters] = useState([]);
+  const [allVoters, setAllVoters] = useState([]);
   const [isLoadingVoters, setIsLoadingVoters] = useState(false);
+  const [isLoadingAllVoters, setIsLoadingAllVoters] = useState(false);
   const [removingVoterAddress, setRemovingVoterAddress] = useState(null);
+  const [voterSearchQuery, setVoterSearchQuery] = useState('');
   const fileInputRefs = useRef({});
 
   // Create election form state
@@ -67,9 +73,19 @@ const CreatorDashboard = () => {
               // Get election from database
               const dbElection = await apiService.getElectionByContract(election.contractAddress);
               if (dbElection.success && dbElection.election) {
-                // Get election state from contract
-                const { contractService } = await import('../../services/contractService');
-                const electionInfo = await contractService.getElectionInfo(election.contractAddress);
+                // Get election state from contract (only if contract exists)
+                let contractState = '0';
+                try {
+                  const { contractService } = await import('../../services/contractService');
+                  const electionInfo = await contractService.getElectionInfo(election.contractAddress);
+                  if (electionInfo?.success && electionInfo.contractExists !== false) {
+                    contractState = electionInfo.info?.state?.toString() || '0';
+                  }
+                } catch (err) {
+                  // eslint-disable-next-line no-console
+                  console.warn('[CreatorDashboard] Error getting contract state:', err.message);
+                  // Use default state '0' if contract doesn't exist
+                }
                 
                 return {
                   ...election,
@@ -78,7 +94,7 @@ const CreatorDashboard = () => {
                   electionType: dbElection.election.electionType || 'LOCAL',
                   startTime: dbElection.election.startTime || election.creationTime,
                   endTime: dbElection.election.endTime || '',
-                  state: electionInfo?.success ? electionInfo.info?.state?.toString() : '0',
+                  state: contractState,
                   ipfsHash: dbElection.election.ipfsHash || election.ipfsCid
                 };
               }
@@ -151,16 +167,107 @@ const CreatorDashboard = () => {
     }
 
     try {
-      const response = await apiService.createElectionAsCreator({
+      // Step 1: Upload metadata to IPFS
+      const uploadToast = toast.loading('Đang upload metadata lên IPFS...');
+      
+      const gateway = import.meta.env.VITE_IPFS_GATEWAY_URL || 'https://gateway.pinata.cloud/ipfs/';
+      const candidatesForMetadata = formData.candidates.map((candidate) => {
+        const imageCid = candidate.imageHash || candidate.imageCid || null;
+        return {
+          name: candidate.name,
+          party: candidate.party,
+          age: candidate.age,
+          manifesto: candidate.manifesto,
+          description: candidate.description || '',
+          imageCid,
+          imageUrl: imageCid ? `${gateway}${imageCid}` : null,
+        };
+      });
+
+      const metadata = {
+        title: formData.title,
+        description: formData.description,
+        electionType: formData.electionType,
+        candidates: candidatesForMetadata,
+        createdAt: new Date().toISOString()
+      };
+
+      const ipfsResult = await ipfsService.uploadJSON(metadata);
+      toast.dismiss(uploadToast);
+      
+      if (!ipfsResult.success || !ipfsResult.hash) {
+        throw new Error(ipfsResult.error || 'IPFS upload failed');
+      }
+
+      const ipfsCid = ipfsResult.hash;
+      toast.success('Đã upload metadata lên IPFS');
+
+      // Step 2: Deploy election contract via MetaMask
+      const deployToast = toast.loading('Đang deploy contract... Vui lòng xác nhận trong MetaMask');
+      
+      const deployResult = await contractService.createElection(
+        formData.title,
+        formData.description,
+        formData.electionType,
+        startTime,
+        endTime,
+        formData.allowRealtimeResults,
+        ipfsCid
+      );
+
+      toast.dismiss(deployToast);
+
+      if (!deployResult.success || !deployResult.electionAddress) {
+        throw new Error(deployResult.error || 'Failed to deploy election contract');
+      }
+
+      const electionAddress = deployResult.electionAddress;
+      toast.success('Đã deploy contract thành công!');
+
+      // Step 3: Initialize election with config and all candidates in one transaction
+      const configToast = toast.loading('Đang cấu hình election và thêm ứng viên... Vui lòng xác nhận trong MetaMask');
+      
+      const ethersModule = await import('ethers');
+      const { ethers } = ethersModule;
+      const tokenAmount = formData.requireToken ? ethers.parseEther(formData.tokenAmount.toString() || '1') : 0;
+
+      // Prepare candidates data
+      const candidatesData = formData.candidates.map(c => ({
+        name: c.name,
+        party: c.party,
+        age: parseInt(c.age),
+        manifesto: c.manifesto || '',
+        imageHash: c.imageHash || c.imageCid || '',
+        imageCid: c.imageCid || ''
+      }));
+
+      // Initialize election with all candidates in one transaction
+      const initResult = await contractService.initializeElectionWithCandidates(
+        electionAddress,
+        formData.isPublic,
+        formData.requireToken,
+        tokenAmount,
+        candidatesData
+      );
+
+      if (!initResult.success) {
+        throw new Error(initResult.error || 'Failed to initialize election');
+      }
+
+      toast.dismiss(configToast);
+      toast.success('Đã cấu hình election và thêm tất cả ứng viên thành công!');
+
+      // Step 4: Save to backend database
+      const saveToast = toast.loading('Đang lưu vào database...');
+      
+      const response = await apiService.saveElectionToDatabase({
+        contractAddress: electionAddress,
         title: formData.title,
         description: formData.description,
         electionType: formData.electionType,
         startTime,
         endTime,
-        allowRealtimeResults: formData.allowRealtimeResults,
-        isPublic: formData.isPublic,
-        requireToken: formData.requireToken,
-        tokenAmount: formData.tokenAmount,
+        ipfsCid,
         candidates: formData.candidates.map(c => ({
           name: c.name,
           party: c.party,
@@ -170,6 +277,8 @@ const CreatorDashboard = () => {
           imageHash: c.imageHash || ''
         }))
       });
+
+      toast.dismiss(saveToast);
 
       if (response.success) {
         toast.success('Đã tạo election thành công!');
@@ -182,13 +291,17 @@ const CreatorDashboard = () => {
           // eslint-disable-next-line no-console
           console.log('[CreatorDashboard] Reloading elections...');
           loadElections();
-        }, 2000); // Wait 2 seconds for transaction to be mined
+        }, 2000);
       } else {
-        toast.error(response.error || 'Không thể tạo election');
+        toast.error(response.error || 'Không thể lưu election vào database');
       }
     } catch (error) {
       console.error('Create election error:', error);
-      toast.error(error.message || 'Không thể tạo election');
+      if (error.code === 4001) {
+        toast.error('Người dùng đã từ chối giao dịch');
+      } else {
+        toast.error(error.message || 'Không thể tạo election');
+      }
     }
   };
 
@@ -197,12 +310,18 @@ const CreatorDashboard = () => {
     try {
       const response = await apiService.getElectionVoters(electionAddress);
       if (response.success) {
-        setElectionVoters(response.voters || []);
+        const voters = response.voters || [];
+        // eslint-disable-next-line no-console
+        console.log('[CreatorDashboard] Loaded election voters:', voters);
+        // eslint-disable-next-line no-console
+        console.log('[CreatorDashboard] Voter addresses:', voters.map(v => v.address || v.voterAddress));
+        setElectionVoters(voters);
       } else {
         toast.error(response.error || 'Không thể tải danh sách voters');
         setElectionVoters([]);
       }
     } catch (error) {
+      // eslint-disable-next-line no-console
       console.error('Load voters error:', error);
       toast.error(error.message || 'Không thể tải danh sách voters');
       setElectionVoters([]);
@@ -211,29 +330,139 @@ const CreatorDashboard = () => {
     }
   };
 
-  const handleAddVoter = async (electionAddress) => {
-    if (!newVoterAddress || !/^0x[a-fA-F0-9]{40}$/.test(newVoterAddress)) {
+  const loadAllVoters = async () => {
+    setIsLoadingAllVoters(true);
+    try {
+      const response = await apiService.getAllVoters(voterSearchQuery);
+      if (response.success) {
+        setAllVoters(response.voters || []);
+      } else {
+        toast.error(response.error || 'Không thể tải danh sách voters');
+        setAllVoters([]);
+      }
+    } catch (error) {
+      console.error('Load all voters error:', error);
+      toast.error(error.message || 'Không thể tải danh sách voters');
+      setAllVoters([]);
+    } finally {
+      setIsLoadingAllVoters(false);
+    }
+  };
+
+  // Load all voters when modal opens
+  useEffect(() => {
+    if (showManageVoters) {
+      loadAllVoters();
+      loadElectionVoters(showManageVoters);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showManageVoters]);
+
+  // Load all voters when search query changes (debounced)
+  useEffect(() => {
+    if (!showManageVoters) return;
+    
+    const timeoutId = window.setTimeout(() => {
+      loadAllVoters();
+    }, 500);
+
+    return () => window.clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voterSearchQuery, showManageVoters]);
+
+  const handleAddVoter = async (electionAddress, voterAddress) => {
+    if (!voterAddress || !/^0x[a-fA-F0-9]{40}$/.test(voterAddress)) {
       toast.error('Địa chỉ ví không hợp lệ');
       return;
     }
 
     setIsAddingVoter(true);
     try {
-      const response = await apiService.addVoterToElection(electionAddress, newVoterAddress);
-      if (response.success) {
-        toast.success('Đã thêm voter thành công');
-        setNewVoterAddress('');
-        // Wait a bit for blockchain transaction to be mined and indexed
-        // eslint-disable-next-line no-console
-        console.log('[CreatorDashboard] Voter added, waiting before reload...');
-        window.setTimeout(async () => {
-          // eslint-disable-next-line no-console
-          console.log('[CreatorDashboard] Reloading voters list...');
-          await loadElectionVoters(electionAddress);
-        }, 2000); // Wait 2 seconds for transaction to be mined
-      } else {
-        toast.error(response.error || 'Không thể thêm voter');
+      // Step 1: Add voter to contract via MetaMask
+      const addVoterToast = toast.loading('Đang thêm voter vào contract... Vui lòng xác nhận trong MetaMask');
+      
+      const addVoterResult = await contractService.addVoter(electionAddress, voterAddress);
+      toast.dismiss(addVoterToast);
+      
+      if (!addVoterResult.success) {
+        if (addVoterResult.error?.includes('user rejected') || addVoterResult.error?.includes('4001')) {
+          toast.error('Người dùng đã từ chối giao dịch');
+        } else {
+          toast.error(addVoterResult.error || 'Không thể thêm voter vào contract');
+        }
+        return;
       }
+
+      toast.success('Đã thêm voter vào contract!');
+
+      // Step 2: Save to database
+      // eslint-disable-next-line no-console
+      console.log('[CreatorDashboard] Calling API to save voter to database:', { electionAddress, voterAddress });
+      const saveToast = toast.loading('Đang lưu vào database...');
+      
+      try {
+        const response = await apiService.addVoterToElection(electionAddress, voterAddress);
+        // eslint-disable-next-line no-console
+        console.log('[CreatorDashboard] API response:', response);
+        toast.dismiss(saveToast);
+        
+        if (!response.success) {
+          // eslint-disable-next-line no-console
+          console.error('[CreatorDashboard] Failed to save voter to database:', response.error);
+          toast.error(`Đã thêm voter vào contract nhưng không thể lưu vào database: ${response.error}`, { duration: 5000 });
+          // Continue anyway since contract was updated
+        } else {
+          toast.success('Đã lưu voter vào database');
+          // eslint-disable-next-line no-console
+          console.log('[CreatorDashboard] Successfully saved voter to database');
+        }
+      } catch (apiError) {
+        // eslint-disable-next-line no-console
+        console.error('[CreatorDashboard] Error calling API to save voter:', apiError);
+        toast.dismiss(saveToast);
+        toast.error(`Đã thêm voter vào contract nhưng lỗi khi lưu vào database: ${apiError.message}`, { duration: 5000 });
+      }
+
+      // Step 2: Mint VotingToken cho voter (yêu cầu MetaMask xác nhận)
+      try {
+        // eslint-disable-next-line no-console
+        console.log('[CreatorDashboard] Minting VotingToken for voter:', voterAddress);
+        
+        // Show loading toast
+        const mintToast = toast.loading('Đang mint VotingToken... Vui lòng xác nhận trong MetaMask');
+        
+        // Mint 1 token (có thể điều chỉnh số lượng sau)
+        const mintResult = await contractService.mintVotingToken(voterAddress, '1');
+        
+        if (mintResult.success) {
+          toast.dismiss(mintToast);
+          toast.success(`Đã mint 1 VotingToken cho ${voterAddress.slice(0, 10)}...${voterAddress.slice(-8)}`);
+          // eslint-disable-next-line no-console
+          console.log('[CreatorDashboard] Token minted successfully:', mintResult.transactionHash);
+        } else {
+          toast.dismiss(mintToast);
+          // Log error but don't fail the whole operation
+          // eslint-disable-next-line no-console
+          console.error('[CreatorDashboard] Failed to mint token:', mintResult.error);
+          toast.error(`Đã thêm voter nhưng không thể mint token: ${mintResult.error}`, {
+            duration: 5000,
+          });
+        }
+      } catch (mintError) {
+        // eslint-disable-next-line no-console
+        console.error('[CreatorDashboard] Error minting token:', mintError);
+        // Don't fail the whole operation if mint fails
+        toast.error(`Đã thêm voter nhưng lỗi khi mint token: ${mintError.message}`, {
+          duration: 5000,
+        });
+      }
+      
+      // Reload both lists
+      await loadElectionVoters(electionAddress);
+      await loadAllVoters();
+      
+      // eslint-disable-next-line no-console
+      console.log('[CreatorDashboard] Reloaded voters lists');
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Add voter error:', error);
@@ -405,17 +634,27 @@ const CreatorDashboard = () => {
             </h1>
             <p className="text-gray-600 mt-2 text-base sm:text-lg">Quản lý elections của bạn</p>
           </div>
-          <Button
-            onClick={() => setShowCreateModal(true)}
-            variant="primary"
-            size="medium"
-            className="w-full sm:w-auto"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            Tạo Election Mới
-          </Button>
+          <WalletGuard showConnectButton={false} showWarning={false}>
+            <Button
+              onClick={() => {
+                if (!wallet.isConnected) {
+                  toast.error('Vui lòng kết nối MetaMask để tạo election');
+                  return;
+                }
+                setShowCreateModal(true);
+              }}
+              disabled={!wallet.isConnected}
+              variant="primary"
+              size="medium"
+              className="w-full sm:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
+              title={!wallet.isConnected ? 'Vui lòng kết nối MetaMask' : ''}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Tạo Election Mới
+            </Button>
+          </WalletGuard>
         </div>
 
       {/* My Elections */}
@@ -465,7 +704,14 @@ const CreatorDashboard = () => {
                       <span className="font-mono text-xs">Contract: {election.contractAddress.slice(0, 10)}...{election.contractAddress.slice(-8)}</span>
                     </div>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      onClick={() => navigate(`/dashboard/creator/elections/${election.contractAddress}`)}
+                      variant="primary"
+                      size="small"
+                    >
+                      Xem chi tiết
+                    </Button>
                     {election.state === '0' && (
                       <Button
                         onClick={() => {
@@ -485,7 +731,7 @@ const CreatorDashboard = () => {
                         size="small"
                         className="bg-red-600 hover:bg-red-700"
                       >
-                        Kết thúc Election
+                        Công bố kết quả
                       </Button>
                     )}
                     {election.state === '3' && (
@@ -748,80 +994,152 @@ const CreatorDashboard = () => {
           isOpen={!!showManageVoters}
           onClose={() => {
             setShowManageVoters(null);
-            setNewVoterAddress('');
             setElectionVoters([]);
+            setAllVoters([]);
+            setVoterSearchQuery('');
           }}
           title="Quản lý Voters (Private Election)"
+          className="max-w-6xl"
         >
-          <div className="space-y-4">
-            {/* Add Voter Section */}
+          <div className="space-y-6">
+            {/* Search Section */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Thêm Voter (Địa chỉ ví)
+                Tìm kiếm Voter
               </label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={newVoterAddress}
-                  onChange={(e) => setNewVoterAddress(e.target.value)}
-                  placeholder="0x..."
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <Button
-                  onClick={() => handleAddVoter(showManageVoters)}
-                  disabled={isAddingVoter || !newVoterAddress}
-                  variant="primary"
-                >
-                  {isAddingVoter ? 'Đang thêm...' : 'Thêm'}
-                </Button>
-              </div>
+              <input
+                type="text"
+                value={voterSearchQuery}
+                onChange={(e) => setVoterSearchQuery(e.target.value)}
+                placeholder="Tìm kiếm theo tên hoặc email..."
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
             </div>
 
-            {/* Voters List Section */}
-            <div className="border-t pt-4">
-              <h3 className="text-sm font-medium text-gray-700 mb-3">
-                Danh sách Voters ({electionVoters.length})
-              </h3>
-              
-              {isLoadingVoters ? (
-                <div className="text-center py-4 text-gray-500">
-                  <Skeleton className="h-8 w-full mb-2" />
-                  <Skeleton className="h-8 w-full" />
-                </div>
-              ) : electionVoters.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">
-                  <p>Chưa có voter nào được thêm</p>
-                </div>
-              ) : (
-                <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {electionVoters.map((voter, index) => (
-                    <div
-                      key={`${voter.address}-${index}`}
-                      className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100"
-                    >
-                      <div className="flex-1">
-                        <code className="text-sm font-mono text-gray-900 break-all">
-                          {voter.address}
-                        </code>
-                        {voter.timestamp && (
-                          <p className="text-xs text-gray-500 mt-1">
-                            Đã thêm: {new Date(parseInt(voter.timestamp) * 1000).toLocaleString('vi-VN')}
-                          </p>
-                        )}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Available Voters (Not Added) */}
+              <div className="border rounded-lg p-4">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                  Voters chưa được thêm ({allVoters.filter(v => {
+                    if (!v.walletAddress) return false;
+                    const addedAddresses = electionVoters.map(ev => {
+                      const addr = ev.address || ev.voterAddress;
+                      return addr?.toLowerCase();
+                    }).filter(Boolean);
+                    return !addedAddresses.includes(v.walletAddress.toLowerCase());
+                  }).length})
+                </h3>
+                {isLoadingAllVoters ? (
+                  <div className="space-y-2">
+                    <Skeleton className="h-16 w-full" />
+                    <Skeleton className="h-16 w-full" />
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-96 overflow-y-auto">
+                    {allVoters
+                      .filter(v => {
+                        // Only show voters with wallet address
+                        if (!v.walletAddress) return false;
+                        // Filter out voters already added
+                        const addedAddresses = electionVoters.map(ev => {
+                          const addr = ev.address || ev.voterAddress;
+                          return addr?.toLowerCase();
+                        }).filter(Boolean);
+                        return !addedAddresses.includes(v.walletAddress.toLowerCase());
+                      })
+                      .map((voter) => (
+                        <div key={voter.id} className="flex items-center justify-between p-3 bg-blue-50 rounded-lg border border-blue-200">
+                          <div className="flex-1">
+                            <div className="font-medium text-gray-900">{voter.name}</div>
+                            <div className="text-sm text-gray-600">{voter.email}</div>
+                            {voter.walletAddress && (
+                              <code className="text-xs font-mono text-gray-500 mt-1 block">
+                                {voter.walletAddress.slice(0, 10)}...{voter.walletAddress.slice(-8)}
+                              </code>
+                            )}
+                          </div>
+                          <Button
+                            onClick={() => handleAddVoter(showManageVoters, voter.walletAddress)}
+                            disabled={isAddingVoter || !voter.walletAddress}
+                            variant="primary"
+                            size="small"
+                          >
+                            {isAddingVoter ? 'Đang thêm...' : 'Thêm'}
+                          </Button>
+                        </div>
+                      ))}
+                    {allVoters.filter(v => {
+                      if (!v.walletAddress) return false;
+                      const addedAddresses = electionVoters.map(ev => {
+                        const addr = ev.address || ev.voterAddress;
+                        return addr?.toLowerCase();
+                      }).filter(Boolean);
+                      return !addedAddresses.includes(v.walletAddress.toLowerCase());
+                    }).length === 0 && (
+                      <div className="text-center py-8 bg-gray-50 rounded-lg">
+                        <p className="text-gray-500">Không có voter nào để thêm</p>
                       </div>
-                      <Button
-                        onClick={() => handleRemoveVoter(showManageVoters, voter.address)}
-                        disabled={removingVoterAddress === voter.address}
-                        variant="outline"
-                        size="small"
-                        className="text-red-600 hover:text-red-700 ml-3"
-                      >
-                        {removingVoterAddress === voter.address ? 'Đang xóa...' : 'Xóa'}
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Added Voters */}
+              <div className="border rounded-lg p-4">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                  Voters đã được thêm ({electionVoters.length})
+                </h3>
+                {isLoadingVoters ? (
+                  <div className="space-y-2">
+                    <Skeleton className="h-16 w-full" />
+                    <Skeleton className="h-16 w-full" />
+                  </div>
+                ) : electionVoters.length === 0 ? (
+                  <div className="text-center py-8 bg-gray-50 rounded-lg">
+                    <p className="text-gray-500">Chưa có voter nào được thêm</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-96 overflow-y-auto">
+                    {electionVoters.map((voter, index) => {
+                      // Get address from voter object (could be 'address' or 'voterAddress')
+                      const voterAddr = (voter.address || voter.voterAddress);
+                      // Try to find voter info from allVoters
+                      const voterInfo = allVoters.find(v => 
+                        v.walletAddress?.toLowerCase() === voterAddr?.toLowerCase()
+                      );
+                      
+                      return (
+                        <div key={index} className="flex items-center justify-between p-3 bg-green-50 rounded-lg border border-green-200">
+                          <div className="flex-1">
+                            {voterInfo ? (
+                              <>
+                                <div className="font-medium text-gray-900">{voterInfo.name}</div>
+                                <div className="text-sm text-gray-600">{voterInfo.email}</div>
+                                <code className="text-xs font-mono text-gray-500 mt-1 block">
+                                  {voterAddr?.slice(0, 10)}...{voterAddr?.slice(-8)}
+                                </code>
+                              </>
+                            ) : (
+                              <code className="text-sm font-mono text-gray-900">
+                                {voterAddr}
+                              </code>
+                            )}
+                          </div>
+                          <Button
+                            onClick={() => handleRemoveVoter(showManageVoters, voterAddr)}
+                            disabled={removingVoterAddress === voterAddr}
+                            variant="outline"
+                            size="small"
+                            className="text-red-600 border-red-300 hover:bg-red-50 hover:border-red-400"
+                          >
+                            {removingVoterAddress === voterAddr ? 'Đang xóa...' : 'Xóa'}
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </Modal>
@@ -832,7 +1150,7 @@ const CreatorDashboard = () => {
         <Modal
           isOpen={!!showEndElection}
           onClose={() => setShowEndElection(null)}
-          title="Kết thúc Election"
+          title="Công bố kết quả"
         >
           <div className="space-y-4">
             <p className="text-gray-600">
@@ -847,7 +1165,7 @@ const CreatorDashboard = () => {
                 variant="primary"
                 className="bg-red-600 hover:bg-red-700"
               >
-                Kết thúc Election
+                Công bố kết quả
               </Button>
             </div>
           </div>

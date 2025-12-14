@@ -131,6 +131,30 @@ router.get('/:hash', async (req, res) => {
   }
 });
 
+// Get file from IPFS (returns file directly)
+router.get('/file/:hash', async (req, res) => {
+  try {
+    const { hash } = req.params;
+    const config = require('../config/config');
+    
+    // Redirect to IPFS gateway
+    const gatewayUrl = config.ipfs.pinata.enabled && config.ipfs.pinata.gatewayUrl 
+      ? config.ipfs.pinata.gatewayUrl 
+      : config.ipfs.gatewayUrl;
+    
+    const fileUrl = `${gatewayUrl}${hash}`;
+    
+    // Redirect to IPFS gateway
+    res.redirect(fileUrl);
+  } catch (error) {
+    console.error('IPFS get file error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get file from IPFS'
+    });
+  }
+});
+
 // Pin hash
 router.post('/pin/:hash', authenticate, async (req, res) => {
   try {

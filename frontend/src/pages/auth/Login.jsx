@@ -69,31 +69,54 @@ const Login = () => {
           localStorage.removeItem('rememberEmail');
         }
 
-        // Get role from result.user
+        // Get role and wallet address from result.user (from database, most up-to-date)
         const role = result.user?.role;
+        const walletAddress = result.user?.walletAddress || result.user?.wallet_address;
         // eslint-disable-next-line no-console
-        console.log('[Login] User role:', role, 'User object:', result.user);
+        console.log('[Login] User role from database:', role);
+        // eslint-disable-next-line no-console
+        console.log('[Login] User wallet address:', walletAddress);
         
-        // RBAC routing based on role from database
-        // Redirect immediately based on database role, don't wait for smart contract check
-        // RoleGuard will handle smart contract permission check if needed
-        if (role === 'OWNER') {
-          // eslint-disable-next-line no-console
-          console.log('[Login] Redirecting to Owner dashboard');
-          navigate('/dashboard/owner', { replace: true });
-        } else if (role === 'CREATOR') {
-          // eslint-disable-next-line no-console
-          console.log('[Login] Redirecting to Creator dashboard');
-          navigate('/dashboard/creator', { replace: true });
-        } else if (role === 'VOTER') {
-          // eslint-disable-next-line no-console
-          console.log('[Login] Redirecting to Voter dashboard');
-          navigate('/dashboard/voter', { replace: true });
-        } else {
-          // eslint-disable-next-line no-console
-          console.warn('[Login] Unknown role:', role, 'Redirecting to home');
-          navigate('/', { replace: true });
+        // Check if user has wallet address (except OWNER who uses system wallet)
+        if (role !== 'OWNER' && !walletAddress) {
+          // User doesn't have wallet address, redirect to wallet onboarding
+          toast('Vui lòng kết nối MetaMask để tiếp tục', {
+            icon: '⚠️',
+            duration: 3000,
+            style: {
+              background: '#f59e0b',
+              color: '#fff',
+            },
+          });
+          window.setTimeout(() => {
+            navigate('/auth/wallet-onboarding', { replace: true });
+          }, 500);
+          return;
         }
+        
+        // Small delay to ensure state is updated
+        window.setTimeout(() => {
+          // RBAC routing based on role from database
+          // Redirect immediately based on database role, don't wait for smart contract check
+          // RoleGuard will handle smart contract permission check if needed
+          if (role === 'OWNER') {
+            // eslint-disable-next-line no-console
+            console.log('[Login] Redirecting to Owner dashboard');
+            navigate('/dashboard/owner', { replace: true });
+          } else if (role === 'CREATOR') {
+            // eslint-disable-next-line no-console
+            console.log('[Login] Redirecting to Creator dashboard');
+            navigate('/dashboard/creator', { replace: true });
+          } else if (role === 'VOTER') {
+            // eslint-disable-next-line no-console
+            console.log('[Login] Redirecting to Voter dashboard');
+            navigate('/dashboard/voter', { replace: true });
+          } else {
+            // eslint-disable-next-line no-console
+            console.warn('[Login] Unknown role:', role, 'Redirecting to home');
+            navigate('/', { replace: true });
+          }
+        }, 100); // Small delay to ensure Zustand state is updated
       } else {
         setErrors({ submit: result.error || 'Đăng nhập thất bại' });
         toast.error(result.error || 'Đăng nhập thất bại');

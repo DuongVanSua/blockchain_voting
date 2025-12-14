@@ -2,18 +2,16 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import useAuthStore from '../../store/useAuthStore';
 import useWallet from '../../hooks/useWallet';
-import { useAppStore } from '../../store/useAppStore';
 import Button from '../common/Button';
 import Logo from '../common/Logo';
+import WalletConnectButton from '../wallet/WalletConnectButton';
 
 const Header = () => {
   const { isAuthenticated, user, logout, refreshUser } = useAuthStore();
-  const { user: appUser } = useAppStore();
   const wallet = useWallet();
   const navigate = useNavigate();
   const location = useLocation();
   const [showMenu, setShowMenu] = useState(false);
-  const SYSTEM_WALLET_ADDRESS = '0xbc5575790975F2C963AbECA62f9eAEb8c3aB073A';
 
   // Refresh user data from database when component mounts (to get latest wallet address)
   // Only refresh once when authentication status changes, not on every render
@@ -30,33 +28,21 @@ const Header = () => {
   const getDisplayAddress = () => {
     if (!user) return null;
     
-    // For all roles, fetch wallet address from database first
-    // Priority 1: Wallet address directly from database (user object) - always check this first
+    // CRITICAL: Only show wallet address from database (user object)
+    // This ensures each user sees their own wallet address, not others
     const walletAddress = user?.walletAddress || user?.wallet_address;
-    if (walletAddress) {
-      return walletAddress;
+    
+    // For OWNER, don't show wallet address (they use system wallet)
+    if (user?.role === 'OWNER') {
+      return null;
     }
     
-    // Priority 2: Wallet from app store (synced from database)
-    if (appUser?.wallet?.address && appUser?.wallet?.status === 'connected') {
-      return appUser.wallet.address;
-    }
-    
-    // Priority 3: Connected MetaMask wallet (for VOTER role only)
-    if (user?.role === 'VOTER' && wallet?.account && wallet?.isConnected) {
-      return wallet.account;
-    }
-    
-    // Fallback: For OWNER, use hardcoded address only if no database wallet
-    if (user?.role === 'OWNER' && !walletAddress) {
-      return SYSTEM_WALLET_ADDRESS;
-    }
-    
-    return null;
+    // For VOTER and CREATOR, only show if it exists in database
+    // Don't show connected MetaMask address if not saved to database yet
+    return walletAddress || null;
   };
 
-  const address = getDisplayAddress();
-  const isConnected = !!address || wallet?.isConnected || false;
+  getDisplayAddress(); // Get address for display in WalletConnectButton
   const disconnect = wallet?.disconnect || (() => {});
 
 
@@ -144,13 +130,7 @@ const Header = () => {
             <>
               {getRoleNavigation()}
               <div className="flex items-center gap-4">
-                <div className="hidden sm:block">
-                  {isConnected && address && (
-                    <span className="text-xs text-gray-700 bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 px-3 py-1.5 rounded-full font-mono shadow-sm">
-                      {address.slice(0, 6)}...{address.slice(-4)}
-                    </span>
-                  )}
-                </div>
+                <WalletConnectButton showAddress={true} variant="outline" size="small" />
                 <div className="relative">
                   <button
                     className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 text-white border-2 border-white shadow-lg cursor-pointer font-semibold text-base flex items-center justify-center transition-all hover:scale-110 hover:shadow-xl"

@@ -10,28 +10,32 @@ import Skeleton from '../../components/common/Skeleton';
 const OwnerDashboard = () => {
   const [systemStatus, setSystemStatus] = useState(null);
   const [creators, setCreators] = useState([]);
+  const [voters, setVoters] = useState([]);
   const [systemConfig, setSystemConfig] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isPausing, setIsPausing] = useState(false);
   const [showAddCreator, setShowAddCreator] = useState(false);
   const [newCreatorAddress, setNewCreatorAddress] = useState('');
   const [isAddingCreator, setIsAddingCreator] = useState(false);
-  const [removingAddress, setRemovingAddress] = useState(null);
   const [showConfigModal, setShowConfigModal] = useState(null);
   const [configFormData, setConfigFormData] = useState({});
   const [isUpdatingConfig, setIsUpdatingConfig] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [updatingUserId, setUpdatingUserId] = useState(null);
 
   useEffect(() => {
     loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const [statusRes, creatorsRes, configRes] = await Promise.allSettled([
+      const [statusRes, creatorsRes, configRes, usersRes] = await Promise.allSettled([
         apiService.getSystemStatus(),
         apiService.getCreators(),
-        apiService.getSystemConfig()
+        apiService.getSystemConfig(),
+        apiService.getUsers(searchQuery, '', 1, 1000) // Get all users
       ]);
 
       // Handle system status
@@ -64,11 +68,25 @@ const OwnerDashboard = () => {
         setSystemConfig(null);
       }
 
+      // Handle users
+      if (usersRes.status === 'fulfilled' && usersRes.value.success) {
+        const allUsers = usersRes.value.users || [];
+        // Filter by role
+        setVoters(allUsers.filter(u => u.role === 'VOTER'));
+        setCreators(allUsers.filter(u => u.role === 'CREATOR'));
+      } else {
+        const error = usersRes.status === 'rejected' ? usersRes.reason : usersRes.value.error;
+        console.warn('Failed to load users:', error);
+        setVoters([]);
+        setCreators([]);
+      }
+
       // Only show error if ALL requests failed
       const allFailed = 
         (statusRes.status === 'rejected' || !statusRes.value?.success) &&
         (creatorsRes.status === 'rejected' || !creatorsRes.value?.success) &&
-        (configRes.status === 'rejected' || !configRes.value?.success);
+        (configRes.status === 'rejected' || !configRes.value?.success) &&
+        (usersRes.status === 'rejected' || !usersRes.value?.success);
 
       if (allFailed) {
         toast.error('Không thể tải dữ liệu. Vui lòng kiểm tra smart contract đã được deploy chưa.');
@@ -78,6 +96,54 @@ const OwnerDashboard = () => {
       toast.error(`Không thể tải dữ liệu: ${error.message || 'Lỗi không xác định'}`);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Load users when search query changes
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      loadUsers();
+    }, 500); // Debounce search
+
+    return () => window.clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery]);
+
+  const loadUsers = async () => {
+    try {
+      const response = await apiService.getUsers(searchQuery, '', 1, 1000);
+      if (response.success) {
+        const allUsers = response.users || [];
+        setVoters(allUsers.filter(u => u.role === 'VOTER'));
+        setCreators(allUsers.filter(u => u.role === 'CREATOR'));
+      }
+    } catch (error) {
+      console.error('Load users error:', error);
+    }
+  };
+
+  const handleRoleChange = async (userId, newRole) => {
+    if (!window.confirm(`Bạn có chắc chắn muốn chuyển người dùng này thành ${newRole === 'CREATOR' ? 'Creator' : 'Voter'}?`)) {
+      return;
+    }
+
+    setUpdatingUserId(userId);
+    try {
+      const response = await apiService.updateUserRole(userId, newRole);
+      if (response.success) {
+        toast.success(`Đã chuyển người dùng thành ${newRole === 'CREATOR' ? 'Creator' : 'Voter'} thành công`);
+        // Wait a bit for blockchain transaction to be mined
+        window.setTimeout(() => {
+          loadUsers();
+        }, 2000);
+      } else {
+        toast.error(response.error || 'Không thể chuyển đổi role');
+      }
+    } catch (error) {
+      console.error('Update role error:', error);
+      toast.error(error.message || 'Không thể chuyển đổi role');
+    } finally {
+      setUpdatingUserId(null);
     }
   };
 
@@ -154,27 +220,6 @@ const OwnerDashboard = () => {
     }
   };
 
-  const handleRemoveCreator = async (address) => {
-    if (!window.confirm(`Bạn có chắc chắn muốn xóa creator ${address}?`)) {
-      return;
-    }
-
-    setRemovingAddress(address);
-    try {
-      const response = await apiService.removeCreator(address);
-      if (response.success) {
-        toast.success('Đã xóa creator thành công');
-        loadData();
-      } else {
-        toast.error(response.error || 'Không thể xóa creator');
-      }
-    } catch (error) {
-      console.error('Remove creator error:', error);
-      toast.error(error.message || 'Không thể xóa creator');
-    } finally {
-      setRemovingAddress(null);
-    }
-  };
 
   const handleUpdateConfig = async (type) => {
     const address = configFormData[type];
@@ -382,81 +427,153 @@ const OwnerDashboard = () => {
         </Card>
       )}
 
-      {/* Creators Management */}
+      {/* Users Management */}
       <Card className="p-6 sm:p-8">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-          <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Election Creators</h2>
-          <Button
-            onClick={() => setShowAddCreator(true)}
-            variant="primary"
-            size="medium"
-            className="w-full sm:w-auto"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            Thêm Creator
-          </Button>
+          <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Quản lý người dùng</h2>
+          <div className="flex gap-2 w-full sm:w-auto">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Tìm kiếm theo tên hoặc email..."
+              className="flex-1 sm:flex-none sm:w-64 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
         </div>
 
-        {creators.length === 0 ? (
-          <div className="text-center py-12">
-            <div className="w-16 h-16 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
-              <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-              </svg>
+        {/* Voters Table */}
+        <div className="mb-8">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Voters ({voters.length})</h3>
+          {voters.length === 0 ? (
+            <div className="text-center py-8 bg-gray-50 rounded-lg">
+              <p className="text-gray-500">Chưa có voter nào</p>
             </div>
-            <p className="text-gray-500 text-lg font-medium">Chưa có creator nào</p>
-            <p className="text-gray-400 text-sm mt-1">Thêm creator đầu tiên để bắt đầu</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto -mx-2 sm:mx-0">
-            <div className="inline-block min-w-full align-middle">
-              <div className="overflow-hidden shadow-sm ring-1 ring-black/5 rounded-xl">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gradient-to-r from-gray-50 to-gray-100/50">
-                    <tr>
-                      <th className="px-4 sm:px-6 py-3.5 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">
-                        Địa chỉ ví
-                      </th>
-                      <th className="px-4 sm:px-6 py-3.5 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">
-                        Trạng thái
-                      </th>
-                      <th className="px-4 sm:px-6 py-3.5 text-right text-xs font-bold text-gray-700 uppercase tracking-wider">
-                        Hành động
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {creators.map((creator) => (
-                      <tr key={creator.address} className="hover:bg-blue-50/50 transition-colors">
-                        <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
-                          <code className="text-sm font-mono text-gray-900 bg-gray-100 px-3 py-1.5 rounded-lg">
-                            {creator.address}
-                          </code>
-                        </td>
-                        <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
-                          <Badge variant="success">Active</Badge>
-                        </td>
-                        <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-right">
-                          <Button
-                            onClick={() => handleRemoveCreator(creator.address)}
-                            disabled={removingAddress === creator.address}
-                            variant="outline"
-                            size="small"
-                            className="text-red-600 border-red-300 hover:bg-red-50 hover:border-red-400"
-                          >
-                            {removingAddress === creator.address ? 'Đang xóa...' : 'Xóa'}
-                          </Button>
-                        </td>
+          ) : (
+            <div className="overflow-x-auto -mx-2 sm:mx-0">
+              <div className="inline-block min-w-full align-middle">
+                <div className="overflow-hidden shadow-sm ring-1 ring-black/5 rounded-xl">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gradient-to-r from-blue-50 to-blue-100/50">
+                      <tr>
+                        <th className="px-4 sm:px-6 py-3.5 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">
+                          Tên
+                        </th>
+                        <th className="px-4 sm:px-6 py-3.5 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">
+                          Email
+                        </th>
+                        <th className="px-4 sm:px-6 py-3.5 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">
+                          Địa chỉ ví
+                        </th>
+                        <th className="px-4 sm:px-6 py-3.5 text-right text-xs font-bold text-gray-700 uppercase tracking-wider">
+                          Hành động
+                        </th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {voters.map((voter) => (
+                        <tr key={voter.id} className="hover:bg-blue-50/50 transition-colors">
+                          <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm font-medium text-gray-900">{voter.name}</div>
+                          </td>
+                          <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm text-gray-600">{voter.email}</div>
+                          </td>
+                          <td className="px-4 sm:px-6 py-4">
+                            {voter.walletAddress ? (
+                              <code className="text-xs font-mono text-gray-900 bg-gray-100 px-2 py-1 rounded">
+                                {voter.walletAddress.slice(0, 10)}...{voter.walletAddress.slice(-8)}
+                              </code>
+                            ) : (
+                              <span className="text-xs text-gray-400">Chưa có ví</span>
+                            )}
+                          </td>
+                          <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-right">
+                            <Button
+                              onClick={() => handleRoleChange(voter.id, 'CREATOR')}
+                              disabled={updatingUserId === voter.id || !voter.walletAddress}
+                              variant="primary"
+                              size="small"
+                            >
+                              {updatingUserId === voter.id ? 'Đang chuyển...' : 'Chuyển thành Creator'}
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
+
+        {/* Creators Table */}
+        <div>
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Creators ({creators.length})</h3>
+          {creators.length === 0 ? (
+            <div className="text-center py-8 bg-gray-50 rounded-lg">
+              <p className="text-gray-500">Chưa có creator nào</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto -mx-2 sm:mx-0">
+              <div className="inline-block min-w-full align-middle">
+                <div className="overflow-hidden shadow-sm ring-1 ring-black/5 rounded-xl">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gradient-to-r from-purple-50 to-purple-100/50">
+                      <tr>
+                        <th className="px-4 sm:px-6 py-3.5 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">
+                          Tên
+                        </th>
+                        <th className="px-4 sm:px-6 py-3.5 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">
+                          Email
+                        </th>
+                        <th className="px-4 sm:px-6 py-3.5 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">
+                          Địa chỉ ví
+                        </th>
+                        <th className="px-4 sm:px-6 py-3.5 text-right text-xs font-bold text-gray-700 uppercase tracking-wider">
+                          Hành động
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {creators.map((creator) => (
+                        <tr key={creator.id} className="hover:bg-purple-50/50 transition-colors">
+                          <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm font-medium text-gray-900">{creator.name}</div>
+                          </td>
+                          <td className="px-4 sm:px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm text-gray-600">{creator.email}</div>
+                          </td>
+                          <td className="px-4 sm:px-6 py-4">
+                            {creator.walletAddress ? (
+                              <code className="text-xs font-mono text-gray-900 bg-gray-100 px-2 py-1 rounded">
+                                {creator.walletAddress.slice(0, 10)}...{creator.walletAddress.slice(-8)}
+                              </code>
+                            ) : (
+                              <span className="text-xs text-gray-400">Chưa có ví</span>
+                            )}
+                          </td>
+                          <td className="px-4 sm:px-6 py-4 whitespace-nowrap text-right">
+                            <Button
+                              onClick={() => handleRoleChange(creator.id, 'VOTER')}
+                              disabled={updatingUserId === creator.id || !creator.walletAddress}
+                              variant="outline"
+                              size="small"
+                              className="text-orange-600 border-orange-300 hover:bg-orange-50 hover:border-orange-400"
+                            >
+                              {updatingUserId === creator.id ? 'Đang chuyển...' : 'Chuyển thành Voter'}
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </Card>
 
       {/* Add Creator Modal */}

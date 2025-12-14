@@ -1,14 +1,18 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import apiService from '../../services/apiService';
 import Card from '../../components/common/Card';
 import Badge from '../../components/common/Badge';
 import Skeleton from '../../components/common/Skeleton';
+import Button from '../../components/common/Button';
+import useAuthStore from '../../store/useAuthStore';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 const ElectionResultsPage = () => {
   const { electionAddress } = useParams();
+  const navigate = useNavigate();
+  const { user } = useAuthStore();
   const [results, setResults] = useState(null);
   const [electionMetadata, setElectionMetadata] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -82,6 +86,26 @@ const ElectionResultsPage = () => {
   return (
     <div className="p-6 space-y-6 animate-fadeIn">
       <div className="mb-8">
+        <div className="flex items-center gap-4 mb-4">
+          <Button
+            onClick={() => {
+              // Navigate based on user role
+              if (user?.role === 'CREATOR') {
+                navigate('/dashboard/creator');
+              } else {
+                navigate('/dashboard/voter');
+              }
+            }}
+            variant="outline"
+            size="small"
+            className="flex items-center gap-2"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+            Quay lại Dashboard
+          </Button>
+        </div>
         <h1 className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-2">
           {electionMetadata?.title || 'Election Results'}
         </h1>

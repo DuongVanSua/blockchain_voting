@@ -6,7 +6,7 @@ async function main() {
   
   // Validate configuration for testnet/mainnet
   if (network !== "hardhat" && network !== "localhost") {
-    console.log(`\n🔍 Checking configuration for ${network} network...\n`);
+    console.log(`\n Checking configuration for ${network} network...\n`);
     
     // Check PRIVATE_KEY
     if (!process.env.PRIVATE_KEY) {

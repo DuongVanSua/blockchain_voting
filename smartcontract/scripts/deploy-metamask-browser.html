@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deploy Contracts via MetaMask</title>
+    <!-- Load ethers.js with multiple fallback CDNs -->
+    <script>
+        // Function to load ethers.js with fallback CDNs
+        function loadEthers() {
+            const cdns = [
+                'https://cdn.jsdelivr.net/npm/ethers@6.9.0/dist/ethers.umd.min.js', // jsdelivr usually fastest
+                'https://unpkg.com/ethers@6.9.0/dist/ethers.umd.min.js', // unpkg backup
+                'https://cdn.ethers.io/lib/ethers-6.9.0.umd.min.js' // official CDN last
+            ];
+            
+            let currentIndex = 0;
+            
+            function tryLoad(index) {
+                if (index >= cdns.length) {
+                    console.error('❌ All CDNs failed to load ethers.js');
+                    const statusDiv = document.getElementById('status');
+                    if (statusDiv) {
+                        statusDiv.innerHTML = '<div class="status error">❌ Error: Failed to load ethers.js from all CDNs.<br>Please check your internet connection or try downloading ethers.js locally.</div>';
+                    }
+                    return;
+                }
+                
+                console.log('Trying to load ethers.js from:', cdns[index]);
+                const script = document.createElement('script');
+                script.src = cdns[index];
+                script.onload = function() {
+                    // Wait a bit longer and check if ethers is actually loaded
+                    setTimeout(function() {
+                        if (typeof ethers !== 'undefined') {
+                            console.log('✅ ethers.js loaded successfully from:', cdns[index]);
+                            const statusDiv = document.getElementById('status');
+                            if (statusDiv) {
+                                if (statusDiv.textContent.includes('Checking') || statusDiv.textContent.includes('Error')) {
+                                    statusDiv.textContent = '✅ ethers.js loaded. Ready to connect MetaMask.';
+                                    statusDiv.className = 'status success';
+                                }
+                            }
+                        } else {
+                            console.warn('⚠️ Script loaded but ethers is still undefined after 300ms, trying next CDN...');
+                            tryLoad(index + 1);
+                        }
+                    }, 300); // Wait 300ms to ensure ethers is fully initialized
+                };
+                script.onerror = function() {
+                    console.warn('❌ Failed to load from:', cdns[index], 'trying next CDN...');
+                    tryLoad(index + 1);
+                };
+                document.head.appendChild(script);
+            }
+            
+            tryLoad(0);
+        }
+        
+        // Load ethers when DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', loadEthers);
+        } else {
+            loadEthers();
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .status {
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+            font-weight: 500;
+        }
+        .status.info {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+        .status.success {
+            background: #e8f5e9;
+            color: #388e3c;
+        }
+        .status.error {
+            background: #ffebee;
+            color: #c62828;
+        }
+        .status.warning {
+            background: #fff3e0;
+            color: #f57c00;
+        }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            width: 100%;
+            margin: 10px 0;
+            transition: transform 0.2s;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .info-box {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            font-family: monospace;
+            font-size: 12px;
+            overflow-x: auto;
+        }
+        .step {
+            margin: 20px 0;
+            padding: 15px;
+            border-left: 4px solid #667eea;
+            background: #f9f9f9;
+        }
+        .step-number {
+            font-weight: bold;
+            color: #667eea;
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Deploy Smart Contracts via MetaMask</h1>
+        
+        <div id="status">Checking for MetaMask...</div>
+        
+        <div id="fileProtocolWarning" style="display: none; background: #fff3cd; border: 1px solid #ffc107; padding: 15px; border-radius: 8px; margin: 15px 0;">
+            <strong>⚠️ Important:</strong> If you opened this file directly (file://), MetaMask may not work properly.<br>
+            Please use a local server instead:<br>
+            <code style="background: #f5f5f5; padding: 5px; border-radius: 3px; display: block; margin-top: 10px;">
+                cd smartcontract/scripts<br>
+                python -m http.server 8000<br>
+                # Then open: http://localhost:8000/deploy-metamask-browser.html
+            </code>
+        </div>
+        
+        <div class="step">
+            <div class="step-number">Step 1: Connect MetaMask</div>
+            <button id="connectBtn" onclick="connectMetaMask()">Connect MetaMask</button>
+            <div id="accountInfo" class="info-box" style="display:none;"></div>
+            <button id="loadLastDeploymentBtn" onclick="loadLastDeployment()" style="margin-top: 10px; background: #4caf50;">📋 Load Last Deployment</button>
+        </div>
+        
+        <div class="step">
+            <div class="step-number">Step 2: Load Contract Artifacts</div>
+            <p>Please upload the compiled contract artifacts (JSON files from artifacts/contracts/)</p>
+            <input type="file" id="votingTokenFile" accept=".json" style="margin: 5px 0;">
+            <label>VotingToken.json (from artifacts/contracts/VotingToken.sol/VotingToken.json)</label><br>
+            <input type="file" id="voterRegistryFile" accept=".json" style="margin: 5px 0;">
+            <label>VoterRegistry.json (from artifacts/contracts/VoterRegistry.sol/VoterRegistry.json)</label><br>
+            <input type="file" id="electionFactoryFile" accept=".json" style="margin: 5px 0;">
+            <label>ElectionFactory.json (from artifacts/contracts/ElectionFactory.sol/ElectionFactory.json)</label><br>
+            <input type="file" id="electionFile" accept=".json" style="margin: 5px 0;">
+            <label>Election.json (from artifacts/contracts/Election.sol/Election.json) - Optional</label>
+            <p style="font-size: 12px; color: #666; margin-top: 5px;">
+                Note: Election.sol is usually created by ElectionFactory, but you can deploy it separately for testing.
+            </p>
+        </div>
+        
+        <div class="step">
+            <div class="step-number">Step 3: Deploy Contracts</div>
+            <button id="deployBtn" onclick="deployContracts()" disabled>Deploy All Contracts</button>
+        </div>
+        
+        <div id="deploymentResults" style="display:none;">
+            <h2>Deployment Results</h2>
+            <div id="results" class="info-box"></div>
+            <button onclick="copyResults()">Copy Results to Clipboard</button>
+            <button onclick="saveToFile()" style="background: #2196f3; margin-left: 10px;">💾 Save to File</button>
+        </div>
+    </div>
+
+    <script>
+        let provider, signer, deployerAddress;
+        let contractArtifacts = {};
+
+        // Check if MetaMask is installed (same logic as useWalletStore)
+        function isMetaMaskInstalled() {
+            if (typeof window === 'undefined') {
+                return false;
+            }
+            // Check for MetaMask specifically - same as WalletConnectButton
+            return !!window.ethereum && (window.ethereum.isMetaMask || window.ethereum.providers?.some(p => p.isMetaMask));
+        }
+
+        // Get MetaMask provider (same logic as useWalletStore)
+        function getMetaMaskProvider() {
+            if (typeof window === 'undefined' || !window.ethereum) {
+                return null;
+            }
+            // If multiple providers, find MetaMask
+            if (window.ethereum.providers) {
+                return window.ethereum.providers.find(p => p.isMetaMask) || window.ethereum;
+            }
+            // Check if current provider is MetaMask
+            if (window.ethereum.isMetaMask) {
+                return window.ethereum;
+            }
+            return window.ethereum;
+        }
+
+        // Wait for MetaMask to inject (can take a moment)
+        async function waitForMetaMask(maxAttempts = 10, delay = 200) {
+            for (let i = 0; i < maxAttempts; i++) {
+                if (isMetaMaskInstalled()) {
+                    return getMetaMaskProvider();
+                }
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+            return null;
+        }
+
+        async function connectMetaMask() {
+            try {
+                // Check if ethers is loaded - wait longer if not
+                if (typeof ethers === 'undefined') {
+                    showStatus('⏳ Waiting for ethers.js to load from CDN...', 'info');
+                    // Wait up to 5 seconds for ethers to load (CDN might be slow)
+                    for (let i = 0; i < 25; i++) {
+                        await new Promise(resolve => setTimeout(resolve, 200));
+                        if (typeof ethers !== 'undefined') {
+                            console.log('✅ ethers.js loaded after', (i + 1) * 200, 'ms');
+                            break;
+                        }
+                    }
+                    
+                    if (typeof ethers === 'undefined') {
+                        showStatus('❌ Error: ethers.js library failed to load after 5 seconds.\n\nPossible solutions:\n1. Check your internet connection\n2. Refresh the page (F5)\n3. Check if CDN is blocked by firewall\n4. Try using a different network', 'error');
+                        console.error('ethers is still not defined after waiting 5 seconds');
+                        console.error('Tried CDNs: cdn.ethers.io, jsdelivr, unpkg');
+                        return;
+                    }
+                }
+
+                // Check for browser environment
+                if (typeof window === 'undefined') {
+                    showStatus('This script must run in a browser environment.', 'error');
+                    return;
+                }
+
+                // Check if opened via file:// protocol (MetaMask doesn't work with file://)
+                if (window.location.protocol === 'file:') {
+                    showStatus('❌ ERROR: This page was opened via file:// protocol. MetaMask cannot work with file://!\n\nPlease use a local server:\n1. Open terminal in smartcontract/scripts folder\n2. Run: python -m http.server 8000\n3. Open: http://localhost:8000/deploy-metamask-browser.html', 'error');
+                    return;
+                }
+
+                // Wait for MetaMask to inject (it may take a moment)
+                showStatus('Checking for MetaMask...', 'info');
+                let ethereumProvider = await waitForMetaMask();
+                
+                if (!ethereumProvider) {
+                    // Final check
+                    if (!window.ethereum) {
+                        showStatus('❌ MetaMask is not installed. Please install MetaMask extension from https://metamask.io/', 'error');
+                        console.error('window.ethereum is undefined');
+                        return;
+                    }
+                    // Try to get provider anyway
+                    ethereumProvider = getMetaMaskProvider() || window.ethereum;
+                }
+
+                console.log('✅ MetaMask provider found:', ethereumProvider);
+                console.log('isMetaMask:', ethereumProvider.isMetaMask);
+
+                showStatus('Requesting MetaMask connection...', 'info');
+                
+                // Request account access - use the provider we found
+                await ethereumProvider.request({ method: 'eth_requestAccounts' });
+                
+                // Use ethers v6 BrowserProvider with the correct provider
+                provider = new ethers.BrowserProvider(ethereumProvider);
+                signer = await provider.getSigner();
+                deployerAddress = await signer.getAddress();
+                
+                const network = await provider.getNetwork();
+                const balance = await provider.getBalance(deployerAddress);
+                
+                document.getElementById('accountInfo').style.display = 'block';
+                document.getElementById('accountInfo').innerHTML = `
+                    <strong>Account:</strong> ${deployerAddress}<br>
+                    <strong>Network:</strong> ${network.name} (Chain ID: ${network.chainId})<br>
+                    <strong>Balance:</strong> ${ethers.formatEther(balance)} ETH
+                `;
+                
+                showStatus('✅ Connected to MetaMask!', 'success');
+                checkReady();
+            } catch (error) {
+                if (error.code === 4001) {
+                    showStatus('❌ User rejected the connection request in MetaMask.', 'error');
+                } else if (error.code === -32002) {
+                    showStatus('⚠️ MetaMask connection request already pending. Please check MetaMask popup.', 'warning');
+                } else {
+                    showStatus('❌ Error connecting to MetaMask: ' + error.message, 'error');
+                    console.error('MetaMask connection error:', error);
+                    console.error('Error code:', error.code);
+                    console.error('window.ethereum:', window.ethereum);
+                    console.error('isMetaMaskInstalled():', isMetaMaskInstalled());
+                }
+            }
+        }
+
+        // Check MetaMask on page load
+        window.addEventListener('load', () => {
+            // Show warning if opened via file://
+            if (window.location.protocol === 'file:') {
+                document.getElementById('fileProtocolWarning').style.display = 'block';
+            }
+            
+            setTimeout(() => {
+                if (isMetaMaskInstalled()) {
+                    console.log('✅ MetaMask detected on page load');
+                    showStatus('✅ MetaMask detected! Click "Connect MetaMask" to proceed.', 'success');
+                } else {
+                    console.warn('⚠️ MetaMask not detected on page load');
+                    console.log('window.ethereum:', window.ethereum);
+                    console.log('window.location.protocol:', window.location.protocol);
+                    
+                    if (window.location.protocol === 'file:') {
+                        showStatus('⚠️ This page was opened via file://. Please use a local server for MetaMask to work.', 'warning');
+                    } else if (window.ethereum) {
+                        showStatus('⚠️ Wallet detected but may not be MetaMask. You can still try to connect.', 'warning');
+                    } else {
+                        showStatus('⚠️ MetaMask not detected. Please ensure MetaMask is installed and enabled, then refresh the page.', 'warning');
+                    }
+                }
+            }, 500); // Wait 500ms for MetaMask to inject
+        });
+
+        // Check MetaMask on page load
+        window.addEventListener('load', () => {
+            // Show warning if opened via file://
+            if (window.location.protocol === 'file:') {
+                document.getElementById('fileProtocolWarning').style.display = 'block';
+            }
+            
+            setTimeout(() => {
+                if (isMetaMaskInstalled()) {
+                    console.log('✅ MetaMask detected on page load');
+                    showStatus('✅ MetaMask detected! Click "Connect MetaMask" to proceed.', 'success');
+                } else {
+                    console.warn('⚠️ MetaMask not detected on page load');
+                    console.log('window.ethereum:', window.ethereum);
+                    console.log('window.location.protocol:', window.location.protocol);
+                    
+                    if (window.location.protocol === 'file:') {
+                        showStatus('⚠️ This page was opened via file://. Please use a local server for MetaMask to work.', 'warning');
+                    } else if (window.ethereum) {
+                        showStatus('⚠️ Wallet detected but may not be MetaMask. You can still try to connect.', 'warning');
+                    } else {
+                        showStatus('⚠️ MetaMask not detected. Please ensure MetaMask is installed and enabled, then refresh the page.', 'warning');
+                    }
+                }
+            }, 500); // Wait 500ms for MetaMask to inject
+        });
+
+        function loadArtifact(fileInput, contractName) {
+            return new Promise((resolve, reject) => {
+                const file = fileInput.files[0];
+                if (!file) {
+                    reject(new Error(`Please select ${contractName} artifact file`));
+                    return;
+                }
+                
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const artifact = JSON.parse(e.target.result);
+                        contractArtifacts[contractName] = artifact;
+                        resolve(artifact);
+                    } catch (error) {
+                        reject(new Error(`Invalid JSON file: ${error.message}`));
+                    }
+                };
+                reader.readAsText(file);
+            });
+        }
+
+        async function deployContracts() {
+            try {
+                // Check if ethers is loaded - wait longer if not
+                if (typeof ethers === 'undefined') {
+                    showStatus('⏳ Waiting for ethers.js to load from CDN...', 'info');
+                    // Wait up to 10 seconds for ethers to load (CDN might be slow)
+                    for (let i = 0; i < 50; i++) {
+                        await new Promise(resolve => setTimeout(resolve, 200));
+                        if (typeof ethers !== 'undefined') {
+                            console.log('✅ ethers.js loaded after', (i + 1) * 200, 'ms');
+                            break;
+                        }
+                    }
+                    
+                    if (typeof ethers === 'undefined') {
+                        showStatus('❌ Error: ethers.js library failed to load after 10 seconds.\n\nPlease:\n1. Check your internet connection\n2. Refresh the page (F5)\n3. Check if CDN is blocked by firewall\n4. Try using a different network', 'error');
+                        console.error('ethers is still not defined after waiting 10 seconds');
+                        console.error('Tried CDNs: jsdelivr, unpkg, cdn.ethers.io');
+                        return;
+                    }
+                }
+
+                if (!signer) {
+                    showStatus('Please connect MetaMask first', 'error');
+                    return;
+                }
+
+                // Load artifacts from files or use default paths
+                showStatus('Loading contract artifacts...', 'info');
+                
+                let votingTokenArtifact, voterRegistryArtifact, electionFactoryArtifact;
+                
+                // Try to load from files first
+                try {
+                    votingTokenArtifact = await loadArtifact(document.getElementById('votingTokenFile'), 'VotingToken');
+                    voterRegistryArtifact = await loadArtifact(document.getElementById('voterRegistryFile'), 'VoterRegistry');
+                    electionFactoryArtifact = await loadArtifact(document.getElementById('electionFactoryFile'), 'ElectionFactory');
+                } catch (error) {
+                    showStatus('⚠️ Could not load artifacts from files. Please ensure all required files are selected.', 'warning');
+                    throw error;
+                }
+
+                showStatus('Artifacts loaded. Starting deployment...', 'info');
+
+                // 1. Deploy VotingToken
+                showStatus('1. Deploying VotingToken... ⏳ Waiting for MetaMask confirmation...', 'info');
+                const VotingTokenFactory = new ethers.ContractFactory(
+                    votingTokenArtifact.abi,
+                    votingTokenArtifact.bytecode,
+                    signer
+                );
+                const votingToken = await VotingTokenFactory.deploy("Voting Token", "VOTE");
+                showStatus(`   📝 Transaction sent: ${votingToken.deploymentTransaction().hash}`, 'info');
+                await votingToken.waitForDeployment();
+                const votingTokenAddress = await votingToken.getAddress();
+                showStatus(`   ✅ VotingToken deployed to: ${votingTokenAddress}`, 'success');
+
+                // 2. Deploy VoterRegistry
+                showStatus('2. Deploying VoterRegistry... ⏳ Waiting for MetaMask confirmation...', 'info');
+                const VoterRegistryFactory = new ethers.ContractFactory(
+                    voterRegistryArtifact.abi,
+                    voterRegistryArtifact.bytecode,
+                    signer
+                );
+                const voterRegistry = await VoterRegistryFactory.deploy(18);
+                showStatus(`   📝 Transaction sent: ${voterRegistry.deploymentTransaction().hash}`, 'info');
+                await voterRegistry.waitForDeployment();
+                const voterRegistryAddress = await voterRegistry.getAddress();
+                showStatus(`   ✅ VoterRegistry deployed to: ${voterRegistryAddress}`, 'success');
+
+                // 3. Deploy ElectionFactory
+                showStatus('3. Deploying ElectionFactory... ⏳ Waiting for MetaMask confirmation...', 'info');
+                const ElectionFactoryFactory = new ethers.ContractFactory(
+                    electionFactoryArtifact.abi,
+                    electionFactoryArtifact.bytecode,
+                    signer
+                );
+                const electionFactory = await ElectionFactoryFactory.deploy(
+                    voterRegistryAddress,
+                    votingTokenAddress
+                );
+                showStatus(`   📝 Transaction sent: ${electionFactory.deploymentTransaction().hash}`, 'info');
+                await electionFactory.waitForDeployment();
+                const electionFactoryAddress = await electionFactory.getAddress();
+                showStatus(`   ✅ ElectionFactory deployed to: ${electionFactoryAddress}`, 'success');
+
+                // 4. Deploy Election (Optional - usually created by ElectionFactory)
+                let electionAddress = null;
+                const electionFile = document.getElementById('electionFile');
+                if (electionFile.files.length > 0) {
+                    try {
+                        showStatus('4. Deploying Election (optional)... ⏳ Waiting for MetaMask confirmation...', 'info');
+                        const electionArtifact = await loadArtifact(electionFile, 'Election');
+                        
+                        // Election constructor requires: electionId, title, description, electionType, voterRegistry, votingToken, startTime, endTime, allowRealtimeResults, ipfsCid
+                        // For testing, we'll use default values
+                        const electionId = 1;
+                        const title = "Test Election";
+                        const description = "Test Election Description";
+                        const electionType = "LOCAL";
+                        const startTime = Math.floor(Date.now() / 1000) + 3600; // 1 hour from now
+                        const endTime = startTime + 86400; // 24 hours later
+                        const allowRealtimeResults = true;
+                        const ipfsCid = "QmTest123456789";
+                        
+                        const ElectionFactory = new ethers.ContractFactory(
+                            electionArtifact.abi,
+                            electionArtifact.bytecode,
+                            signer
+                        );
+                        const election = await ElectionFactory.deploy(
+                            electionId,
+                            title,
+                            description,
+                            electionType,
+                            voterRegistryAddress,
+                            votingTokenAddress,
+                            startTime,
+                            endTime,
+                            allowRealtimeResults,
+                            ipfsCid
+                        );
+                        showStatus(`   📝 Transaction sent: ${election.deploymentTransaction().hash}`, 'info');
+                        await election.waitForDeployment();
+                        electionAddress = await election.getAddress();
+                        showStatus(`   ✅ Election deployed to: ${electionAddress}`, 'success');
+                    } catch (error) {
+                        showStatus(`   ⚠️ Election deployment skipped: ${error.message}`, 'warning');
+                    }
+                }
+
+                // Save results
+                const network = await provider.getNetwork();
+                const deploymentInfo = {
+                    network: network.name,
+                    chainId: network.chainId.toString(),
+                    deployer: deployerAddress,
+                    contracts: {
+                        VotingToken: votingTokenAddress,
+                        VoterRegistry: voterRegistryAddress,
+                        ElectionFactory: electionFactoryAddress,
+                        ...(electionAddress && { Election: electionAddress })
+                    },
+                    timestamp: new Date().toISOString(),
+                };
+
+                // Save to localStorage for persistence
+                const storageKey = `deployment_${network.chainId}_${network.name}`;
+                localStorage.setItem(storageKey, JSON.stringify(deploymentInfo));
+                
+                // Also save to a general key for easy access
+                localStorage.setItem('lastDeployment', JSON.stringify(deploymentInfo));
+
+                document.getElementById('results').textContent = JSON.stringify(deploymentInfo, null, 2);
+                document.getElementById('deploymentResults').style.display = 'block';
+                
+                showStatus('✅ All contracts deployed successfully!', 'success');
+                
+                // Show warning about address changes
+                const warningDiv = document.createElement('div');
+                warningDiv.className = 'status warning';
+                warningDiv.style.marginTop = '15px';
+                warningDiv.innerHTML = `
+                    <strong>⚠️ Lưu ý:</strong><br>
+                    • Mỗi lần deploy mới, địa chỉ contract sẽ <strong>THAY ĐỔI</strong> (vì nonce tăng)<br>
+                    • Địa chỉ này đã được lưu vào localStorage<br>
+                    • Nếu restart Hardhat node, nonce reset về 0 → địa chỉ có thể giống lần deploy đầu tiên<br>
+                    • Nếu deploy nhiều lần trong cùng session → địa chỉ sẽ khác nhau
+                `;
+                document.getElementById('deploymentResults').appendChild(warningDiv);
+            } catch (error) {
+                let errorMessage = error.message;
+                if (error.code === 4001) {
+                    errorMessage = 'User rejected the transaction in MetaMask';
+                } else if (error.code === -32603) {
+                    errorMessage = 'Internal JSON-RPC error. Check MetaMask console for details.';
+                } else if (error.code === 'ACTION_REJECTED') {
+                    errorMessage = 'Transaction was rejected in MetaMask';
+                }
+                showStatus('❌ Deployment error: ' + errorMessage, 'error');
+                console.error('Full error:', error);
+            }
+        }
+
+        function checkReady() {
+            const hasRequiredFiles = document.getElementById('votingTokenFile').files.length > 0 &&
+                            document.getElementById('voterRegistryFile').files.length > 0 &&
+                            document.getElementById('electionFactoryFile').files.length > 0;
+            
+            document.getElementById('deployBtn').disabled = !signer || !hasRequiredFiles;
+        }
+
+        // Add event listeners for file inputs
+        document.getElementById('votingTokenFile').addEventListener('change', checkReady);
+        document.getElementById('voterRegistryFile').addEventListener('change', checkReady);
+        document.getElementById('electionFactoryFile').addEventListener('change', checkReady);
+        document.getElementById('electionFile').addEventListener('change', () => {
+            // Election is optional, so we don't need to check it for deploy button
+        });
+
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.className = 'status ' + type;
+            statusDiv.textContent = message;
+        }
+
+        async function copyResults() {
+            const results = document.getElementById('results').textContent;
+            await navigator.clipboard.writeText(results);
+            showStatus('✅ Results copied to clipboard!', 'success');
+        }
+
+        function loadLastDeployment() {
+            try {
+                const lastDeployment = localStorage.getItem('lastDeployment');
+                if (!lastDeployment) {
+                    showStatus('⚠️ No previous deployment found in localStorage.', 'warning');
+                    return;
+                }
+
+                const deploymentInfo = JSON.parse(lastDeployment);
+                document.getElementById('results').textContent = JSON.stringify(deploymentInfo, null, 2);
+                document.getElementById('deploymentResults').style.display = 'block';
+                
+                showStatus('✅ Loaded last deployment from localStorage!', 'success');
+                
+                // Show info about address changes
+                const infoDiv = document.createElement('div');
+                infoDiv.className = 'status info';
+                infoDiv.style.marginTop = '15px';
+                infoDiv.innerHTML = `
+                    <strong>ℹ️ Thông tin:</strong><br>
+                    • Đây là địa chỉ contract từ lần deploy trước<br>
+                    • Nếu bạn deploy lại, địa chỉ sẽ <strong>THAY ĐỔI</strong><br>
+                    • Để giữ địa chỉ cũ, không deploy lại contract đó
+                `;
+                document.getElementById('deploymentResults').appendChild(infoDiv);
+            } catch (error) {
+                showStatus('❌ Error loading last deployment: ' + error.message, 'error');
+                console.error('Error loading last deployment:', error);
+            }
+        }
+
+        function saveToFile() {
+            try {
+                const results = document.getElementById('results').textContent;
+                const deploymentInfo = JSON.parse(results);
+                const filename = `deployment_${deploymentInfo.network}_${deploymentInfo.chainId}_${Date.now()}.json`;
+                
+                const blob = new Blob([results], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                showStatus('✅ Deployment info saved to file: ' + filename, 'success');
+            } catch (error) {
+                showStatus('❌ Error saving to file: ' + error.message, 'error');
+                console.error('Error saving to file:', error);
+            }
+        }
+    </script>
+</body>
+</html>
+

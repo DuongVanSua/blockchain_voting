@@ -17,6 +17,7 @@ import WalletOnboarding from './pages/auth/WalletOnboarding';
 // Role-based Dashboards
 import OwnerDashboard from './pages/owner/OwnerDashboard';
 import CreatorDashboard from './pages/creator/CreatorDashboard';
+import ElectionDetail from './pages/creator/ElectionDetail';
 import VoterDashboardRBAC from './pages/voter/VoterDashboardRBAC';
 import ElectionResultsPage from './pages/voter/ElectionResultsPage';
 
@@ -107,6 +108,20 @@ function App() {
               <RoleGuard requiredRole="CREATOR">
                 <Layout>
                   <CreatorDashboard />
+                </Layout>
+              </RoleGuard>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Creator Election Detail */}
+        <Route
+          path="/dashboard/creator/elections/:electionAddress"
+          element={
+            <ProtectedRoute>
+              <RoleGuard requiredRole="CREATOR">
+                <Layout>
+                  <ElectionDetail />
                 </Layout>
               </RoleGuard>
             </ProtectedRoute>

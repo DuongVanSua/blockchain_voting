@@ -27,6 +27,9 @@ const VoterDashboardRBAC = () => {
   const [candidates, setCandidates] = useState([]);
   const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [selectedCandidate, setSelectedCandidate] = useState(null);
+  const [currentElection, setCurrentElection] = useState(null);
+  const [showCandidateDetail, setShowCandidateDetail] = useState(null);
+  const [activeTab, setActiveTab] = useState('upcoming'); // 'upcoming', 'ongoing', 'ended'
 
   // Get wallet address from database first, then fallback to MetaMask
   const getWalletAddress = () => {
@@ -94,15 +97,33 @@ const VoterDashboardRBAC = () => {
   const loadCandidates = async (electionAddress) => {
     setLoadingCandidates(true);
     try {
+      // Try API first (faster and includes metadata)
+      const apiResult = await apiService.getVoterElectionDetail(electionAddress);
+      if (apiResult.success && apiResult.election?.candidates) {
+        setCandidates(apiResult.election.candidates || []);
+        setCurrentElection(apiResult.election);
+        return;
+      }
+
+      // Fallback to contract service
       const result = await contractService.getCandidates(electionAddress);
       if (result.success) {
         setCandidates(result.candidates || []);
+        // Try to get election info from API
+        try {
+          const electionInfo = await apiService.getVoterElectionDetail(electionAddress);
+          if (electionInfo.success) {
+            setCurrentElection(electionInfo.election);
+          }
+        } catch (e) {
+          // Continue without election info
+        }
       } else {
         toast.error('Không thể tải danh sách ứng viên');
       }
     } catch (error) {
       console.error('Load candidates error:', error);
-      toast.error('Không thể tải danh sách ứng viên');
+      toast.error('Không thể tải danh sách ứng viên: ' + (error.message || 'Lỗi không xác định'));
     } finally {
       setLoadingCandidates(false);
     }
@@ -111,6 +132,7 @@ const VoterDashboardRBAC = () => {
   const handleOpenVoteModal = async (electionAddress) => {
     setShowVoteModal(electionAddress);
     setSelectedCandidate(null);
+    setCurrentElection(null);
     await loadCandidates(electionAddress);
   };
 
@@ -283,12 +305,14 @@ const VoterDashboardRBAC = () => {
   };
 
   const handleVote = async (electionAddress, candidateId) => {
-    if (!window.ethereum) {
-      toast.error('Vui lòng cài đặt MetaMask');
+    // Check MetaMask connection
+    if (!wallet.isConnected) {
+      toast.error('Vui lòng kết nối MetaMask để bầu cử');
       return;
     }
 
-    if (!candidateId) {
+    // Use nullish check to handle candidateId = 0
+    if (candidateId === null || candidateId === undefined) {
       toast.error('Vui lòng chọn ứng viên');
       return;
     }
@@ -299,6 +323,13 @@ const VoterDashboardRBAC = () => {
       const statusRes = await apiService.getElectionStatus(electionAddress);
       if (!statusRes.success) {
         throw new Error(statusRes.error || 'Không thể lấy trạng thái election');
+      }
+
+      // Check if voter is registered in contract
+      if (!statusRes.isVoter) {
+        toast.error('Bạn chưa được đăng ký trong contract. Vui lòng liên hệ Creator để được thêm vào danh sách voter.', { duration: 5000 });
+        setVoting(null);
+        return;
       }
 
       if (!statusRes.canVote) {
@@ -313,8 +344,183 @@ const VoterDashboardRBAC = () => {
         return;
       }
 
-      if (statusRes.state !== '1') {
-        toast.error('Election chưa bắt đầu hoặc đã kết thúc');
+      // Check election time (startTime and endTime) - more reliable than contract state
+      let isElectionOngoing = false;
+      let electionInfo = currentElection;
+      
+      // If currentElection is not set, try to get it from elections list
+      if (!electionInfo) {
+        electionInfo = elections.find(e => e.contractAddress?.toLowerCase() === electionAddress?.toLowerCase());
+      }
+      
+      if (electionInfo) {
+        try {
+          const now = new Date();
+          // Handle both timestamp (seconds) and Date string formats
+          let startTime = null;
+          let endTime = null;
+          
+          // Parse startTime
+          if (electionInfo.startTime) {
+            try {
+              let startTimeValue = electionInfo.startTime;
+              
+              // If string, try to parse as number
+              if (typeof startTimeValue === 'string') {
+                const parsed = Number(startTimeValue);
+                if (!isNaN(parsed)) {
+                  startTimeValue = parsed;
+                }
+              }
+              
+              // If number, check if it's seconds (timestamp < year 2100 in seconds)
+              if (typeof startTimeValue === 'number') {
+                // Timestamp in seconds if < 4102444800 (year 2100 in seconds)
+                if (startTimeValue < 4102444800) {
+                  startTime = new Date(startTimeValue * 1000); // Convert seconds to milliseconds
+                } else {
+                  startTime = new Date(startTimeValue); // Already in milliseconds
+                }
+              } else {
+                // Try to parse as Date string
+                startTime = new Date(startTimeValue);
+              }
+              
+              // Validate date
+              if (isNaN(startTime.getTime())) {
+                startTime = null;
+              }
+            } catch (e) {
+              // eslint-disable-next-line no-console
+              console.warn('[handleVote] Error parsing startTime:', electionInfo.startTime, e);
+              startTime = null;
+            }
+          }
+          
+          // Parse endTime
+          if (electionInfo.endTime) {
+            try {
+              let endTimeValue = electionInfo.endTime;
+              
+              // If string, try to parse as number
+              if (typeof endTimeValue === 'string') {
+                const parsed = Number(endTimeValue);
+                if (!isNaN(parsed)) {
+                  endTimeValue = parsed;
+                }
+              }
+              
+              // If number, check if it's seconds (timestamp < year 2100 in seconds)
+              if (typeof endTimeValue === 'number') {
+                // Timestamp in seconds if < 4102444800 (year 2100 in seconds)
+                if (endTimeValue < 4102444800) {
+                  endTime = new Date(endTimeValue * 1000); // Convert seconds to milliseconds
+                } else {
+                  endTime = new Date(endTimeValue); // Already in milliseconds
+                }
+              } else {
+                // Try to parse as Date string
+                endTime = new Date(endTimeValue);
+              }
+              
+              // Validate date
+              if (isNaN(endTime.getTime())) {
+                endTime = null;
+              }
+            } catch (e) {
+              // eslint-disable-next-line no-console
+              console.warn('[handleVote] Error parsing endTime:', electionInfo.endTime, e);
+              endTime = null;
+            }
+          }
+          
+          if (startTime && endTime) {
+            isElectionOngoing = startTime <= now && endTime >= now;
+            // Get timezone for display
+            // eslint-disable-next-line no-undef
+            const timezone = typeof Intl !== 'undefined' && Intl.DateTimeFormat ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'UTC';
+            // eslint-disable-next-line no-console
+            console.log('[handleVote] Time check:', {
+              now: {
+                utc: now.toISOString(),
+                // eslint-disable-next-line no-undef
+                local: typeof Intl !== 'undefined' ? now.toLocaleString('vi-VN', { timeZone: timezone }) : now.toISOString()
+              },
+              startTime: {
+                utc: startTime.toISOString(),
+                // eslint-disable-next-line no-undef
+                local: typeof Intl !== 'undefined' ? startTime.toLocaleString('vi-VN', { timeZone: timezone }) : startTime.toISOString()
+              },
+              endTime: {
+                utc: endTime.toISOString(),
+                // eslint-disable-next-line no-undef
+                local: typeof Intl !== 'undefined' ? endTime.toLocaleString('vi-VN', { timeZone: timezone }) : endTime.toISOString()
+              },
+              isOngoing: isElectionOngoing,
+              contractState: statusRes.state,
+              rawStartTime: electionInfo.startTime,
+              rawEndTime: electionInfo.endTime,
+              timezone: timezone
+            });
+          } else {
+            // eslint-disable-next-line no-console
+            console.warn('[handleVote] Invalid or missing dates:', {
+              rawStartTime: electionInfo.startTime,
+              rawEndTime: electionInfo.endTime,
+              parsedStartTime: startTime ? startTime.toISOString() : 'Invalid',
+              parsedEndTime: endTime ? endTime.toISOString() : 'Invalid'
+            });
+          }
+        } catch (error) {
+          // eslint-disable-next-line no-console
+          console.error('[handleVote] Error checking election time:', error);
+          // Continue with contract state check if time check fails
+        }
+      }
+
+      // Check contract state
+      const contractState = statusRes.state?.toString() || statusRes.state;
+      
+      // NEW LOGIC: Election auto-starts when startTime is reached
+      // If contract state is CREATED (0) but time check says ongoing, allow voting
+      // The contract will auto-start when vote() is called
+      if (contractState === '0' && isElectionOngoing) {
+        // Contract state is CREATED (0) but startTime has been reached
+        // Contract will auto-start when vote() is called - allow voting
+        // eslint-disable-next-line no-console
+        console.log('[handleVote] Contract state is CREATED (0) but startTime reached - election will auto-start on vote');
+      } else if (contractState === '0' && !isElectionOngoing) {
+        // Contract state is CREATED (0) and startTime hasn't been reached yet
+        toast.error('Election chưa bắt đầu. Vui lòng chờ đến thời gian bắt đầu để có thể bầu cử.');
+        setVoting(null);
+        return;
+      } else if (contractState !== '1' && contractState !== '0') {
+        // Contract state is not ONGOING (1) or CREATED (0)
+        if (contractState === '2') {
+          // PAUSED state - check if can resume
+          if (isElectionOngoing) {
+            toast.error('Election đang bị tạm dừng. Vui lòng liên hệ Creator để tiếp tục bầu cử.');
+          } else {
+            toast.error('Election đã kết thúc hoặc đang bị tạm dừng.');
+          }
+        } else if (contractState === '3' || contractState === '4') {
+          toast.error('Election đã kết thúc');
+        } else {
+          // eslint-disable-next-line no-console
+          console.warn('[handleVote] Unknown contract state:', contractState);
+          toast.error('Election chưa bắt đầu hoặc đã kết thúc. Vui lòng kiểm tra lại.');
+        }
+        setVoting(null);
+        return;
+      } else if (contractState === '1') {
+        // Contract state is ONGOING (1) - allow voting
+        // eslint-disable-next-line no-console
+        console.log('[handleVote] Contract state is ONGOING (1) - allowing vote');
+      }
+      
+      // Final check: If time check says not ongoing, block voting
+      if (!isElectionOngoing && contractState === '0') {
+        toast.error('Election chưa bắt đầu. Vui lòng chờ đến thời gian bắt đầu.');
         setVoting(null);
         return;
       }
@@ -327,17 +533,84 @@ const VoterDashboardRBAC = () => {
       // Call vote on contract
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
+      const signerAddress = await signer.getAddress();
       
       const contractABI = [
         "function vote(uint256 candidateId, bytes32 voteHash) external",
         "function hasVoterVoted(address) external view returns (bool)",
         "function canVote(address) external view returns (bool)",
+        "function isVoter(address) external view returns (bool)",
         "function state() external view returns (uint8)"
       ];
       
       const contract = new ethers.Contract(electionAddress, contractABI, signer);
+      
+      // Double-check voter is registered in contract before voting
+      const isVoterInContract = await contract.isVoter(signerAddress);
+      if (!isVoterInContract) {
+        // eslint-disable-next-line no-console
+        console.error('[handleVote] Voter not registered in contract:', {
+          signerAddress,
+          electionAddress,
+          statusRes
+        });
+        toast.error('Bạn chưa được đăng ký trong contract. Vui lòng liên hệ Creator để được thêm vào danh sách voter.', { duration: 5000 });
+        setVoting(null);
+        return;
+      }
+      
+      // eslint-disable-next-line no-console
+      console.log('[handleVote] Calling vote on contract:', {
+        electionAddress,
+        candidateId,
+        signerAddress,
+        isVoterInContract
+      });
+      
       const tx = await contract.vote(candidateId, voteHash);
-      await tx.wait();
+      // eslint-disable-next-line no-console
+      console.log('[handleVote] Transaction sent:', tx.hash);
+      const receipt = await tx.wait();
+      // eslint-disable-next-line no-console
+      console.log('[handleVote] Transaction confirmed:', receipt.hash);
+
+      // Save vote to database and update candidate voteCount
+      try {
+        // Get electionId from currentElection or elections list
+        let electionId = null;
+        if (currentElection?.id) {
+          electionId = currentElection.id;
+        } else {
+          const election = elections.find(e => e.contractAddress?.toLowerCase() === electionAddress?.toLowerCase());
+          electionId = election?.id;
+        }
+
+        if (electionId) {
+          // eslint-disable-next-line no-console
+          console.log('[handleVote] Saving vote to database:', { electionId, candidateId, transactionHash: receipt.hash });
+          const saveVoteResult = await apiService.saveVote({
+            electionId,
+            candidateId,
+            transactionHash: receipt.hash
+          });
+          
+          if (saveVoteResult.success) {
+            // eslint-disable-next-line no-console
+            console.log('[handleVote] Vote saved to database successfully');
+          } else {
+            // eslint-disable-next-line no-console
+            console.warn('[handleVote] Failed to save vote to database:', saveVoteResult.error);
+            // Don't show error to user as vote was successful on contract
+          }
+        } else {
+          // eslint-disable-next-line no-console
+          console.warn('[handleVote] Could not find electionId for electionAddress:', electionAddress);
+        }
+      } catch (saveError) {
+        // eslint-disable-next-line no-console
+        console.error('[handleVote] Error saving vote to database:', saveError);
+        // Don't show error to user as vote was successful on contract
+      }
 
       toast.success('Bầu cử thành công!');
       setShowVoteModal(null);
@@ -376,6 +649,55 @@ const VoterDashboardRBAC = () => {
     };
     return <Badge variant={variants[state] || 'primary'}>{getStateLabel(state)}</Badge>;
   };
+
+  // Filter elections by time (startTime and endTime)
+  const filterElectionsByTab = (electionsList) => {
+    const now = new Date();
+    
+    switch (activeTab) {
+      case 'upcoming':
+        // Elections that haven't started yet (startTime > now)
+        return electionsList.filter(e => {
+          const startTime = new Date(e.startTime);
+          return startTime > now;
+        });
+      case 'ongoing':
+        // Elections that are currently running (startTime <= now && endTime >= now)
+        return electionsList.filter(e => {
+          const startTime = new Date(e.startTime);
+          const endTime = new Date(e.endTime);
+          return startTime <= now && endTime >= now;
+        });
+      case 'ended':
+        // Elections that have ended (endTime < now)
+        return electionsList.filter(e => {
+          const endTime = new Date(e.endTime);
+          return endTime < now;
+        });
+      default:
+        return electionsList;
+    }
+  };
+
+  const filteredElections = filterElectionsByTab(elections);
+  
+  // Count elections by tab based on time
+  const now = new Date();
+  const upcomingCount = elections.filter(e => {
+    const startTime = new Date(e.startTime);
+    return startTime > now;
+  }).length;
+  
+  const ongoingCount = elections.filter(e => {
+    const startTime = new Date(e.startTime);
+    const endTime = new Date(e.endTime);
+    return startTime <= now && endTime >= now;
+  }).length;
+  
+  const endedCount = elections.filter(e => {
+    const endTime = new Date(e.endTime);
+    return endTime < now;
+  }).length;
 
   if (isLoading) {
     return (
@@ -444,15 +766,84 @@ const VoterDashboardRBAC = () => {
         </Card>
       )}
 
+      {/* Tabs */}
+      <Card className="p-0 overflow-hidden">
+        <div className="flex border-b border-gray-200 bg-gray-50">
+          <button
+            onClick={() => setActiveTab('upcoming')}
+            className={`flex-1 px-6 py-4 text-sm font-medium transition-all ${
+              activeTab === 'upcoming'
+                ? 'bg-white text-orange-600 border-b-2 border-orange-600'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            Sắp diễn ra
+            {upcomingCount > 0 && (
+              <span className={`ml-2 px-2 py-0.5 rounded-full text-xs ${
+                activeTab === 'upcoming' ? 'bg-orange-100 text-orange-700' : 'bg-gray-200 text-gray-700'
+              }`}>
+                {upcomingCount}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab('ongoing')}
+            className={`flex-1 px-6 py-4 text-sm font-medium transition-all ${
+              activeTab === 'ongoing'
+                ? 'bg-white text-blue-600 border-b-2 border-blue-600'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            Đang diễn ra
+            {ongoingCount > 0 && (
+              <span className={`ml-2 px-2 py-0.5 rounded-full text-xs ${
+                activeTab === 'ongoing' ? 'bg-blue-100 text-blue-700' : 'bg-gray-200 text-gray-700'
+              }`}>
+                {ongoingCount}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab('ended')}
+            className={`flex-1 px-6 py-4 text-sm font-medium transition-all ${
+              activeTab === 'ended'
+                ? 'bg-white text-red-600 border-b-2 border-red-600'
+                : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            Đã kết thúc
+            {endedCount > 0 && (
+              <span className={`ml-2 px-2 py-0.5 rounded-full text-xs ${
+                activeTab === 'ended' ? 'bg-red-100 text-red-700' : 'bg-gray-200 text-gray-700'
+              }`}>
+                {endedCount}
+              </span>
+            )}
+          </button>
+        </div>
+      </Card>
+
       {/* Elections List */}
-      {elections.length === 0 ? (
+      {filteredElections.length === 0 ? (
         <EmptyState
-          title="Chưa có election nào"
-          description="Hiện tại không có election nào đang diễn ra"
+          title={
+            activeTab === 'upcoming' 
+              ? 'Chưa có election sắp diễn ra'
+              : activeTab === 'ongoing'
+              ? 'Chưa có election đang diễn ra'
+              : 'Chưa có election đã kết thúc'
+          }
+          description={
+            activeTab === 'upcoming'
+              ? 'Hiện tại không có election nào sắp diễn ra'
+              : activeTab === 'ongoing'
+              ? 'Hiện tại không có election nào đang diễn ra'
+              : 'Hiện tại không có election nào đã kết thúc'
+          }
         />
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
-          {elections.map((election) => (
+          {filteredElections.map((election) => (
             <Card key={election.contractAddress} hoverable className="p-5 sm:p-6">
               <div className="mb-4">
                 <div className="flex items-start justify-between mb-3">
@@ -480,45 +871,90 @@ const VoterDashboardRBAC = () => {
 
               {/* Actions */}
               <div className="flex items-center gap-3 pt-4 border-t">
-                {!election.isVoter && election.isPublic && election.state === '0' && (
-                  <Button
-                    onClick={() => handleRegister(election.contractAddress)}
-                    disabled={registering === election.contractAddress}
-                    variant="primary"
-                  >
-                    {registering === election.contractAddress ? 'Đang đăng ký...' : 'Đăng ký tham gia'}
-                  </Button>
-                )}
+                {(() => {
+                  const now = new Date();
+                  const startTime = new Date(election.startTime);
+                  const endTime = new Date(election.endTime);
+                  const isOngoing = startTime <= now && endTime >= now;
+                  const isEnded = endTime < now;
+                  const isUpcoming = startTime > now;
 
-                {election.isVoter && !election.hasVoted && election.state === '1' && (
-                  <Button
-                    onClick={() => handleOpenVoteModal(election.contractAddress)}
-                    disabled={voting === election.contractAddress}
-                    variant="primary"
-                    className="bg-green-600 hover:bg-green-700"
-                  >
-                    Bầu cử
-                  </Button>
-                )}
+                  // Public election - register button (only if not registered and election hasn't started)
+                  if (!election.isVoter && election.isPublic && isUpcoming) {
+                    return (
+                      <Button
+                        onClick={() => handleRegister(election.contractAddress)}
+                        disabled={registering === election.contractAddress}
+                        variant="primary"
+                      >
+                        {registering === election.contractAddress ? 'Đang đăng ký...' : 'Đăng ký tham gia'}
+                      </Button>
+                    );
+                  }
 
-                {election.hasVoted && (
-                  <Badge variant="success">Đã bầu cử</Badge>
-                )}
+                  // Show vote button when election is ongoing and voter can vote
+                  if (election.isVoter && !election.hasVoted && isOngoing) {
+                    return (
+                      <Button
+                        onClick={() => handleOpenVoteModal(election.contractAddress)}
+                        disabled={voting === election.contractAddress}
+                        variant="primary"
+                        className="bg-green-600 hover:bg-green-700"
+                      >
+                        {voting === election.contractAddress ? 'Đang bầu cử...' : 'Bầu cử'}
+                      </Button>
+                    );
+                  }
 
-                {(election.state === '3' || election.state === '4') && (
-                  <Button
-                    onClick={() => navigate(`/elections/${election.contractAddress}/results`)}
-                    variant="outline"
-                  >
-                    Xem Kết quả
-                  </Button>
-                )}
+                  // Show results button when election ended (for all voters)
+                  if (isEnded) {
+                    return (
+                      <Button
+                        onClick={() => navigate(`/elections/${election.contractAddress}/results`)}
+                        variant="primary"
+                        className="bg-blue-600 hover:bg-blue-700"
+                      >
+                        Xem Kết quả
+                      </Button>
+                    );
+                  }
 
-                {!election.canVote && !election.isVoter && !election.isPublic && (
-                  <span className="text-sm text-gray-500">
-                    Private election - Chờ creator thêm bạn vào danh sách
-                  </span>
-                )}
+                  // Show status messages
+                  if (election.isVoter && !election.hasVoted) {
+                    if (isUpcoming) {
+                      // Election hasn't started yet
+                      return (
+                        <div className="flex items-center gap-2">
+                          <Badge variant="primary" className="bg-blue-100 text-blue-700">
+                            Đã được thêm vào danh sách
+                          </Badge>
+                          <span className="text-sm text-blue-600 font-medium">
+                            Chờ election bắt đầu để có thể bầu cử
+                          </span>
+                        </div>
+                      );
+                    }
+                  }
+
+                  // Private election - waiting for creator to add
+                  if (!election.isVoter && !election.isPublic && isUpcoming) {
+                    return (
+                      <span className="text-sm text-gray-500">
+                        Private election - Chờ creator thêm bạn vào danh sách
+                      </span>
+                    );
+                  }
+
+                  // Show voted badge (only if election is still ongoing)
+                  if (election.hasVoted && !isEnded) {
+                    return (
+                      <Badge variant="success">Đã bầu cử</Badge>
+                    );
+                  }
+
+                  return null;
+                })()}
+
               </div>
             </Card>
           ))}
@@ -533,11 +969,28 @@ const VoterDashboardRBAC = () => {
             setShowVoteModal(null);
             setSelectedCandidate(null);
             setCandidates([]);
+            setCurrentElection(null);
           }}
           title="Bầu cử"
           size="large"
         >
           <div className="space-y-6">
+            {/* Election Information */}
+            {currentElection && (
+              <Card className="p-4 bg-gradient-to-r from-blue-50 to-purple-50 border-2 border-blue-200">
+                <h3 className="text-xl font-bold text-gray-900 mb-2">{currentElection.title}</h3>
+                {currentElection.description && (
+                  <p className="text-sm text-gray-700 mb-3">{currentElection.description}</p>
+                )}
+                <div className="flex flex-wrap gap-4 text-sm text-gray-600">
+                  <span><strong>Loại:</strong> {currentElection.electionType}</span>
+                  <span><strong>Bắt đầu:</strong> {new Date(parseInt(currentElection.startTime) * 1000).toLocaleString('vi-VN')}</span>
+                  <span><strong>Kết thúc:</strong> {new Date(parseInt(currentElection.endTime) * 1000).toLocaleString('vi-VN')}</span>
+                  <span><strong>Số ứng viên:</strong> {candidates.length}</span>
+                </div>
+              </Card>
+            )}
+
             {loadingCandidates ? (
               <div className="text-center py-8">
                 <Skeleton className="h-32 w-full" />
@@ -548,32 +1001,70 @@ const VoterDashboardRBAC = () => {
               </div>
             ) : (
               <>
-                <div className="space-y-3">
+                <div className="space-y-4">
                   <h3 className="text-lg font-semibold text-gray-900 mb-4">Chọn ứng viên:</h3>
-                  {candidates.map((candidate) => (
-                    <div
-                      key={candidate.candidateId}
-                      onClick={() => setSelectedCandidate(candidate.candidateId)}
-                      className={`p-4 border-2 rounded-lg cursor-pointer transition-all ${
-                        selectedCandidate === candidate.candidateId
-                          ? 'border-blue-500 bg-blue-50'
-                          : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <h4 className="font-semibold text-gray-900">{candidate.name}</h4>
-                          <p className="text-sm text-gray-600 mt-1">{candidate.party}</p>
-                          {candidate.manifesto && (
-                            <p className="text-sm text-gray-500 mt-2">{candidate.manifesto}</p>
-                          )}
-                        </div>
-                        {selectedCandidate === candidate.candidateId && (
-                          <Badge variant="success">Đã chọn</Badge>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {candidates.map((candidate) => {
+                      // Use nullish coalescing (??) instead of OR (||) to handle candidateId = 0
+                      const candidateId = candidate.candidateId ?? candidate.id;
+                      return (
+                        <Card
+                          key={candidateId}
+                          onClick={() => setSelectedCandidate(candidateId)}
+                          className={`p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                            selectedCandidate === candidateId
+                              ? 'border-blue-500 bg-blue-50 shadow-lg'
+                              : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                          }`}
+                        >
+                          <div className="space-y-3">
+                            {/* Candidate Image */}
+                            {candidate.imageUrl && (
+                              <div className="w-full h-32 rounded-lg overflow-hidden bg-gray-100">
+                                <img
+                                  src={candidate.imageUrl}
+                                  alt={candidate.name}
+                                  className="w-full h-full object-cover"
+                                  onError={(e) => {
+                                    e.target.style.display = 'none';
+                                  }}
+                                />
+                              </div>
+                            )}
+                            
+                            <div className="flex items-start justify-between">
+                              <div className="flex-1">
+                                <h4 className="font-bold text-lg text-gray-900">{candidate.name}</h4>
+                                <p className="text-sm text-gray-600 mt-1">{candidate.party}</p>
+                                {candidate.age && (
+                                  <p className="text-xs text-gray-500 mt-1">Tuổi: {candidate.age}</p>
+                                )}
+                                {candidate.manifesto && (
+                                  <p className="text-sm text-gray-500 mt-2 line-clamp-2">{candidate.manifesto}</p>
+                                )}
+                              </div>
+                              {selectedCandidate === candidateId && (
+                                <Badge variant="success">Đã chọn</Badge>
+                              )}
+                            </div>
+                          
+                            {/* View Details Button */}
+                            <Button
+                              variant="outline"
+                              size="small"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setShowCandidateDetail(candidate);
+                              }}
+                              className="w-full mt-2"
+                            >
+                              Xem chi tiết
+                            </Button>
+                          </div>
+                        </Card>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 <div className="flex gap-3 justify-end pt-4 border-t">
@@ -582,6 +1073,7 @@ const VoterDashboardRBAC = () => {
                       setShowVoteModal(null);
                       setSelectedCandidate(null);
                       setCandidates([]);
+                      setCurrentElection(null);
                     }}
                     variant="outline"
                   >
@@ -589,7 +1081,7 @@ const VoterDashboardRBAC = () => {
                   </Button>
                   <Button
                     onClick={() => handleVote(showVoteModal, selectedCandidate)}
-                    disabled={!selectedCandidate || voting === showVoteModal}
+                    disabled={(selectedCandidate === null || selectedCandidate === undefined) || voting === showVoteModal}
                     variant="primary"
                     className="bg-green-600 hover:bg-green-700"
                   >
@@ -598,6 +1090,94 @@ const VoterDashboardRBAC = () => {
                 </div>
               </>
             )}
+          </div>
+        </Modal>
+      )}
+
+      {/* Candidate Detail Modal */}
+      {showCandidateDetail && (
+        <Modal
+          isOpen={!!showCandidateDetail}
+          onClose={() => setShowCandidateDetail(null)}
+          title={`Chi tiết ứng viên: ${showCandidateDetail.name}`}
+          size="large"
+        >
+          <div className="space-y-4">
+            {/* Candidate Image */}
+            {showCandidateDetail.imageUrl && (
+              <div className="w-full h-64 rounded-lg overflow-hidden bg-gray-100">
+                <img
+                  src={showCandidateDetail.imageUrl}
+                  alt={showCandidateDetail.name}
+                  className="w-full h-full object-cover"
+                  onError={(e) => {
+                    e.target.style.display = 'none';
+                    e.target.nextSibling.style.display = 'flex';
+                  }}
+                />
+                <div className="w-full h-full bg-gradient-to-br from-blue-100 to-purple-100 items-center justify-center hidden">
+                  <svg className="w-16 h-16 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                </div>
+              </div>
+            )}
+
+            {/* Candidate Info */}
+            <div className="space-y-3">
+              <div>
+                <h3 className="text-2xl font-bold text-gray-900">{showCandidateDetail.name}</h3>
+                <p className="text-lg text-gray-600 mt-1">{showCandidateDetail.party}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                {showCandidateDetail.age && (
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Tuổi</p>
+                    <p className="text-base font-semibold text-gray-900">{showCandidateDetail.age}</p>
+                  </div>
+                )}
+                {showCandidateDetail.voteCount !== undefined && (
+                  <div>
+                    <p className="text-sm font-medium text-gray-500">Số phiếu</p>
+                    <p className="text-base font-semibold text-green-600">{showCandidateDetail.voteCount || 0}</p>
+                  </div>
+                )}
+              </div>
+
+              {showCandidateDetail.description && (
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-2">Mô tả</p>
+                  <p className="text-base text-gray-700 leading-relaxed">{showCandidateDetail.description}</p>
+                </div>
+              )}
+
+              {showCandidateDetail.manifesto && (
+                <div>
+                  <p className="text-sm font-medium text-gray-500 mb-2">Tuyên ngôn</p>
+                  <p className="text-base text-gray-700 leading-relaxed">{showCandidateDetail.manifesto}</p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3 justify-end pt-4 border-t">
+              <Button
+                onClick={() => setShowCandidateDetail(null)}
+                variant="outline"
+              >
+                Đóng
+              </Button>
+              <Button
+                onClick={() => {
+                  setSelectedCandidate(showCandidateDetail.candidateId ?? showCandidateDetail.id);
+                  setShowCandidateDetail(null);
+                }}
+                variant="primary"
+                className="bg-green-600 hover:bg-green-700"
+              >
+                Chọn ứng viên này
+              </Button>
+            </div>
           </div>
         </Modal>
       )}

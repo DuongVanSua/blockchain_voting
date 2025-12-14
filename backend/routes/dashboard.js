@@ -2,6 +2,7 @@ const express = require('express');
 const { authenticate } = require('../middleware/auth');
 const { requireOwner } = require('../middleware/rbac');
 const { User, Election, KYCSubmission } = require('../models/index');
+const { Op } = require('sequelize');
 
 const router = express.Router();
 
@@ -23,21 +24,34 @@ router.get('/statistics', requireOwner, async (req, res) => {
     const rejectedKYC = await User.count({ where: { kycStatus: 'REJECTED' } });
     
     // Election statistics
+    // Status is now ONGOING or PAUSED, frontend will derive UPCOMING/ONGOING/ENDED from startTime/endTime
     const totalElections = await Election.count();
+    const now = new Date();
+    
+    // Count active elections (ONGOING status and within time range)
     const activeElections = await Election.count({ 
       where: { 
-        status: 'LIVE' 
-      } 
-    });
-    const completedElections = await Election.count({ 
-      where: { 
-        status: 'CLOSED' 
+        status: 'ONGOING',
+        startTime: { [Op.lte]: now },
+        endTime: { [Op.gte]: now }
       } 
     });
     
-    // Get active elections list
+    // Count completed elections (ONGOING status but endTime has passed)
+    const completedElections = await Election.count({ 
+      where: { 
+        status: 'ONGOING',
+        endTime: { [Op.lt]: now }
+      } 
+    });
+    
+    // Get active elections list (ONGOING and within time range)
     const activeElectionsList = await Election.findAll({
-      where: { status: 'LIVE' },
+      where: { 
+        status: 'ONGOING',
+        startTime: { [Op.lte]: now },
+        endTime: { [Op.gte]: now }
+      },
       attributes: ['id', 'title', 'description', 'startTime', 'endTime', 'status'],
       limit: 10,
       order: [['startTime', 'DESC']],

@@ -56,6 +56,7 @@ export const API_ENDPOINTS = {
   },
 
   VOTES: {
+    CREATE: `${API_BASE_URL}/api/votes`,
     RELAY: `${API_BASE_URL}/api/votes/relay`,
     LIST: `${API_BASE_URL}/api/votes/my-votes`,
   },
@@ -68,6 +69,8 @@ export const API_ENDPOINTS = {
     CREATORS: `${API_BASE_URL}/api/owner/creators`,
     ADD_CREATOR: `${API_BASE_URL}/api/owner/creators`,
     REMOVE_CREATOR: (address) => `${API_BASE_URL}/api/owner/creators/${address}`,
+    USERS: `${API_BASE_URL}/api/owner/users`,
+    UPDATE_USER_ROLE: (userId) => `${API_BASE_URL}/api/owner/users/${userId}/role`,
     CONFIG: `${API_BASE_URL}/api/owner/config`,
     UPDATE_VOTER_REGISTRY: `${API_BASE_URL}/api/owner/config/voter-registry`,
     UPDATE_VOTING_TOKEN: `${API_BASE_URL}/api/owner/config/voting-token`,
@@ -78,15 +81,19 @@ export const API_ENDPOINTS = {
   CREATOR: {
     ELECTIONS: `${API_BASE_URL}/api/creator/elections`,
     CREATE_ELECTION: `${API_BASE_URL}/api/creator/elections`,
+    SAVE_ELECTION: `${API_BASE_URL}/api/creator/elections/save`,
+    ELECTION_DETAIL: (address) => `${API_BASE_URL}/api/creator/elections/${address}`,
     UPDATE_CONFIG: (address) => `${API_BASE_URL}/api/creator/elections/${address}/config`,
     GET_VOTERS: (address) => `${API_BASE_URL}/api/creator/elections/${address}/voters`,
     ADD_VOTER: (address) => `${API_BASE_URL}/api/creator/elections/${address}/voters`,
     REMOVE_VOTER: (address, voterAddress) => `${API_BASE_URL}/api/creator/elections/${address}/voters/${voterAddress}`,
     END_ELECTION: (address) => `${API_BASE_URL}/api/creator/elections/${address}/end`,
+    ALL_VOTERS: `${API_BASE_URL}/api/creator/voters`,
   },
 
   VOTER: {
     ELECTIONS: `${API_BASE_URL}/api/voter/elections`,
+    ELECTION_DETAIL: (address) => `${API_BASE_URL}/api/voter/elections/${address}`,
     REGISTER: (address) => `${API_BASE_URL}/api/voter/elections/${address}/register`,
     VOTE: (address) => `${API_BASE_URL}/api/voter/elections/${address}/vote`,
     RESULTS: (address) => `${API_BASE_URL}/api/voter/elections/${address}/results`,

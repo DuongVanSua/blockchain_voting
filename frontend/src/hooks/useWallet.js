@@ -1,121 +1,102 @@
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { ethers } from 'ethers';
-import { useWeb3 } from './useWeb3';
-import { useAppStore } from '../store/useAppStore';
+import useWalletStore from '../store/useWalletStore';
 
 const useWallet = () => {
-  const { provider, signer, account, isConnected, connect, disconnect } = useWeb3();
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [error, setError] = useState(null);
+  const {
+    address,
+    chainId,
+    isConnected,
+    isConnecting,
+    error,
+    connectWallet,
+    disconnectWallet,
+    checkConnection,
+    getProvider,
+  } = useWalletStore();
+
   const [balance, setBalance] = useState(null);
-  const { updateWallet, updateWalletStatus } = useAppStore();
-  const user = useAppStore((state) => state.user);
-  const walletAddressRef = useRef(null);
+  const [provider, setProvider] = useState(null);
+  const [signer, setSigner] = useState(null);
 
-  // Sync with store
+  // Check connection on mount
   useEffect(() => {
-    const storeWallet = user?.wallet;
-    const storeAddress = storeWallet?.address;
-    const storeStatus = storeWallet?.status;
+    checkConnection();
+  }, [checkConnection]);
 
-    if (storeAddress && storeStatus === 'connected') {
-      if (walletAddressRef.current !== storeAddress) {
-        walletAddressRef.current = storeAddress;
-        updateWallet({
-          address: storeAddress,
-          status: 'connected',
+  // Update provider and signer
+  useEffect(() => {
+    if (isConnected && address) {
+      const prov = getProvider();
+      setProvider(prov);
+      
+      if (prov) {
+        prov.getSigner().then((sig) => {
+          setSigner(sig);
+        }).catch((err) => {
+          console.error('Error getting signer:', err);
         });
       }
-    } else if (!storeAddress || storeStatus !== 'connected') {
-      if (walletAddressRef.current !== null) {
-        walletAddressRef.current = null;
-        updateWalletStatus('disconnected');
-      }
+    } else {
+      setProvider(null);
+      setSigner(null);
     }
-  }, [user?.id, user?.wallet, updateWallet, updateWalletStatus]);
+  }, [isConnected, address, getProvider]);
 
   // Get balance
   const getBalance = useCallback(async () => {
-    if (!account || !provider) {
+    if (!address || !provider) {
       setBalance(null);
       return;
     }
 
     try {
-      const balance = await provider.getBalance(account);
+      const balance = await provider.getBalance(address);
       const balanceInEth = parseFloat(ethers.formatEther(balance));
       setBalance(balanceInEth);
     } catch (error) {
       console.error('Error getting balance:', error);
       setBalance(null);
     }
-  }, [account, provider]);
+  }, [address, provider]);
 
-  // Update wallet when account changes
+  // Update balance when address or provider changes
   useEffect(() => {
-    if (account && isConnected) {
-      updateWallet({
-        address: account,
-        status: 'connected',
-      });
-      walletAddressRef.current = account;
+    if (address && provider) {
       getBalance();
-    } else if (!account && !isConnected) {
-      updateWalletStatus('disconnected');
-      walletAddressRef.current = null;
+    } else {
       setBalance(null);
     }
-  }, [account, isConnected, updateWallet, updateWalletStatus, getBalance]);
+  }, [address, provider, getBalance]);
 
-  // Connect wallet
-  const connectWallet = async () => {
-    setIsConnecting(true);
-    setError(null);
-    try {
-      const success = await connect();
-      if (success) {
-        await getBalance();
-      } else {
-        setError('Failed to connect wallet');
-      }
-      return { success, account };
-    } catch (error) {
-      console.error('Connect wallet error:', error);
-      setError(error.message || 'Failed to connect wallet');
-      return { success: false, error: error.message };
-    } finally {
-      setIsConnecting(false);
-    }
+  // Connect wallet and update database
+  const connect = async () => {
+    const result = await connectWallet();
+    
+    // Note: Database update is now handled in useWalletStore.connectWallet()
+    // to ensure it happens even if address changed
+    // This hook just returns the result
+    
+    return result;
   };
 
   // Disconnect wallet
-  const disconnectWallet = async () => {
-    try {
-      disconnect();
-      updateWalletStatus('disconnected');
-      walletAddressRef.current = null;
-      setBalance(null);
-      setError(null);
-    } catch (error) {
-      console.error('Disconnect wallet error:', error);
-      setError(error.message || 'Failed to disconnect wallet');
-    }
-  };
-
-  // Refresh balance
-  const refreshBalance = async () => {
-    await getBalance();
+  const disconnect = async () => {
+    disconnectWallet();
+    setBalance(null);
   };
 
   return {
-    account,
+    account: address,
+    address,
+    chainId,
     isConnected,
     isConnecting,
     error,
     balance,
-    connect: connectWallet,
-    disconnect: disconnectWallet,
-    refreshBalance,
+    connect,
+    disconnect,
+    refreshBalance: getBalance,
     provider,
     signer,
   };

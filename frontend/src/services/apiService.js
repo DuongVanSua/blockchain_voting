@@ -164,6 +164,15 @@ class APIService {
       includeAuth = true,
     } = options;
 
+    // If URL is relative (starts with /), prepend baseURL
+    let fullUrl = url;
+    if (url.startsWith('/')) {
+      fullUrl = `${this.baseURL}${url}`;
+    } else if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      // If URL doesn't start with http/https and doesn't start with /, assume it's relative
+      fullUrl = `${this.baseURL}/${url}`;
+    }
+
     const requestHeaders = {
       ...this.getHeaders(includeAuth),
       ...headers,
@@ -189,12 +198,12 @@ class APIService {
         const token = this.getToken();
         if (!token) {
           // eslint-disable-next-line no-console
-          console.warn(`[API] Request to ${url} has no token`);
+          console.warn(`[API] Request to ${fullUrl} has no token`);
           // eslint-disable-next-line no-console
           console.warn(`[API] Headers:`, requestHeaders);
         } else {
           // eslint-disable-next-line no-console
-          console.debug(`[API] Request to ${url} with token: ${token.substring(0, 20)}...`);
+          console.debug(`[API] Request to ${fullUrl} with token: ${token.substring(0, 20)}...`);
           // eslint-disable-next-line no-console
           console.debug(`[API] Authorization header:`, requestHeaders.Authorization ? `${requestHeaders.Authorization.substring(0, 30)}...` : 'MISSING');
         }
@@ -202,7 +211,7 @@ class APIService {
     }
 
     try {
-      const response = await window.fetch(url, config);
+      const response = await window.fetch(fullUrl, config);
 
 
       // Handle 401 Unauthorized - Token expired
@@ -626,6 +635,24 @@ class APIService {
     });
   }
 
+  // Get users with search and role filter
+  async getUsers(search = '', role = '', page = 1, limit = 100) {
+    const params = new window.URLSearchParams();
+    if (search) params.append('search', search);
+    if (role) params.append('role', role);
+    params.append('page', page);
+    params.append('limit', limit);
+    return this.request(`${API_ENDPOINTS.OWNER.USERS}?${params.toString()}`);
+  }
+
+  // Update user role (VOTER <-> CREATOR)
+  async updateUserRole(userId, role) {
+    return this.request(API_ENDPOINTS.OWNER.UPDATE_USER_ROLE(userId), {
+      method: 'PUT',
+      body: { role },
+    });
+  }
+
   async getSystemConfig() {
     return this.request(API_ENDPOINTS.OWNER.CONFIG);
   }
@@ -666,8 +693,19 @@ class APIService {
     });
   }
 
+  async saveElectionToDatabase(electionData) {
+    return this.request(API_ENDPOINTS.CREATOR.SAVE_ELECTION, {
+      method: 'POST',
+      body: electionData,
+    });
+  }
+
   async getCreatorElections() {
     return this.request(API_ENDPOINTS.CREATOR.ELECTIONS);
+  }
+
+  async getCreatorElectionDetail(electionAddress) {
+    return this.request(API_ENDPOINTS.CREATOR.ELECTION_DETAIL(electionAddress));
   }
 
   async updateElectionConfig(electionAddress, config) {
@@ -694,6 +732,13 @@ class APIService {
     });
   }
 
+  // Get all voters (role = 'VOTER') from database
+  async getAllVoters(search = '') {
+    const params = new window.URLSearchParams();
+    if (search) params.append('search', search);
+    return this.request(`${API_ENDPOINTS.CREATOR.ALL_VOTERS}?${params.toString()}`);
+  }
+
   async endElection(electionAddress) {
     return this.request(API_ENDPOINTS.CREATOR.END_ELECTION(electionAddress), {
       method: 'POST',
@@ -718,8 +763,19 @@ class APIService {
     });
   }
 
+  async saveVote(voteData) {
+    return this.request(API_ENDPOINTS.VOTES.CREATE, {
+      method: 'POST',
+      body: voteData,
+    });
+  }
+
   async getElectionResults(electionAddress) {
     return this.request(API_ENDPOINTS.VOTER.RESULTS(electionAddress));
+  }
+
+  async getVoterElectionDetail(electionAddress) {
+    return this.request(API_ENDPOINTS.VOTER.ELECTION_DETAIL(electionAddress));
   }
 
   async getElectionStatus(electionAddress) {

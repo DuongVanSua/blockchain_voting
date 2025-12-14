@@ -1,15 +1,43 @@
 import { ethers } from 'ethers';
 
+// Import ABIs directly (Vite requires direct imports for static assets)
+import VotingTokenABI from '../abi/VotingToken.json';
+import VoterRegistryABI from '../abi/VoterRegistry.json';
+import ElectionFactoryABI from '../abi/ElectionFactory.json';
+import ElectionABI from '../abi/Election.json';
+
+// Helper to extract ABI from artifact (handles both direct ABI array and artifact object)
+function extractABI(artifact) {
+  // If it's already an array, return it
+  if (Array.isArray(artifact)) {
+    return artifact;
+  }
+  // If it has an 'abi' property, return that
+  if (artifact && artifact.abi) {
+    return artifact.abi;
+  }
+  // Otherwise return the artifact itself
+  return artifact;
+}
+
+// ABI mapping
+const ABI_MAP = {
+  VotingToken: extractABI(VotingTokenABI),
+  VoterRegistry: extractABI(VoterRegistryABI),
+  ElectionFactory: extractABI(ElectionFactoryABI),
+  Election: extractABI(ElectionABI),
+};
+
 // Load contract ABI
 export async function loadContractABI(contractName) {
   try {
-    // Try to load from artifacts
-    const response = await fetch(`/abi/${contractName}.json`);
-    if (response.ok) {
-      const artifact = await response.json();
-      return artifact.abi || artifact;
+    const abi = ABI_MAP[contractName];
+    if (!abi) {
+      throw new Error(`Contract ABI not found: ${contractName}. Available: ${Object.keys(ABI_MAP).join(', ')}`);
     }
-    throw new Error(`Contract ABI not found: ${contractName}`);
+    // eslint-disable-next-line no-console
+    console.log(`[loadContractABI] Loaded ABI for ${contractName}, length:`, abi.length);
+    return abi;
   } catch (error) {
     console.error(`Error loading contract ABI: ${error.message}`);
     throw error;

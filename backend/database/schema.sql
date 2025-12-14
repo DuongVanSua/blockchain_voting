@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS elections (
     ipfs_hash VARCHAR(255) NULL,
     start_time DATETIME NOT NULL,
     end_time DATETIME NOT NULL,
-    status ENUM('UPCOMING', 'LIVE', 'CLOSED', 'CANCELLED') NOT NULL DEFAULT 'UPCOMING',
+    status ENUM('ONGOING', 'PAUSED') NOT NULL DEFAULT 'ONGOING',
     created_by INT NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -79,6 +79,48 @@ CREATE TABLE IF NOT EXISTS elections (
     INDEX idx_end_time (end_time),
     INDEX idx_status (status),
     INDEX idx_created_by (created_by)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS candidates (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    election_id INT NOT NULL,
+    candidate_index INT NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    party VARCHAR(255) NOT NULL,
+    age INT NOT NULL,
+    manifesto TEXT NOT NULL,
+    description TEXT NULL,
+    image_cid VARCHAR(255) NULL,
+    image_url VARCHAR(500) NULL,
+    vote_count INT NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (election_id) REFERENCES elections(id) ON DELETE CASCADE,
+    INDEX idx_election_id (election_id),
+    INDEX idx_candidate_index (candidate_index),
+    UNIQUE KEY uk_election_candidate_index (election_id, candidate_index)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS election_voters (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    election_id INT NOT NULL,
+    user_id INT NULL,
+    voter_address VARCHAR(255) NOT NULL,
+    registered_by VARCHAR(255) NULL,
+    transaction_hash VARCHAR(255) NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (election_id) REFERENCES elections(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+    INDEX idx_election_id (election_id),
+    INDEX idx_user_id (user_id),
+    INDEX idx_voter_address (voter_address),
+    INDEX idx_transaction_hash (transaction_hash),
+    INDEX idx_is_active (is_active),
+    UNIQUE KEY uk_election_voter (election_id, voter_address)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS votes (

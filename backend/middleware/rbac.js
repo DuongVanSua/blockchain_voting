@@ -1,4 +1,5 @@
 const { getRoles, isOwner, isCreator, isElectionCreator } = require('../services/rbacService');
+const { Op } = require('sequelize');
 
 /**
  * Middleware: Require user to be owner
@@ -128,7 +129,6 @@ const requireElectionCreator = async (req, res, next) => {
       });
     }
 
-    const walletAddress = req.user.walletAddress || req.user.wallet_address;
     const electionAddress = req.params.electionAddress || req.body.electionAddress || req.query.electionAddress;
 
     if (!electionAddress) {
@@ -138,8 +138,63 @@ const requireElectionCreator = async (req, res, next) => {
       });
     }
 
-    // Check if user is the creator of this election
-    // Pass userId to check database createdBy field
+    // CRITICAL: Check database first - only allow if election.createdBy === req.userId
+    // This is the source of truth since we use admin signer for contract creation
+    try {
+      const Election = require('../models/Election');
+      const dbElection = await Election.findOne({
+        where: {
+          [Op.or]: [
+            { contractAddress: electionAddress.toLowerCase() },
+            { contractAddress: electionAddress }
+          ]
+        }
+      });
+
+      if (!dbElection) {
+        return res.status(404).json({
+          success: false,
+          error: 'Election not found'
+        });
+      }
+
+      // Check if current user is the creator (from database)
+      // Convert both to numbers for comparison (handle string vs number mismatch)
+      const electionCreatorId = Number(dbElection.createdBy);
+      const currentUserId = Number(req.userId);
+      
+      // eslint-disable-next-line no-console
+      console.log(`[requireElectionCreator] Checking election ownership:`, {
+        electionAddress,
+        electionCreatorId,
+        currentUserId,
+        electionCreatorIdType: typeof dbElection.createdBy,
+        currentUserIdType: typeof req.userId,
+        match: electionCreatorId === currentUserId
+      });
+      
+      if (electionCreatorId !== currentUserId) {
+        // eslint-disable-next-line no-console
+        console.warn(`[requireElectionCreator] User ${currentUserId} (type: ${typeof req.userId}) is not creator of election ${electionAddress}. Election createdBy: ${electionCreatorId} (type: ${typeof dbElection.createdBy})`);
+        return res.status(403).json({
+          success: false,
+          error: 'Only election creator can perform this action'
+        });
+      }
+
+      // Store election in request for later use
+      req.election = dbElection;
+      req.userRole = 'ELECTION_CREATOR';
+      req.electionAddress = electionAddress;
+      next();
+      return;
+    } catch (dbError) {
+      console.error('[requireElectionCreator] Database check error:', dbError);
+      // Fallback to contract check if database check fails
+    }
+
+    // Fallback: Check smart contract (if database check failed)
+    const walletAddress = req.user.walletAddress || req.user.wallet_address;
     const creatorStatus = await isElectionCreator(electionAddress, walletAddress, req.userId);
 
     if (!creatorStatus) {

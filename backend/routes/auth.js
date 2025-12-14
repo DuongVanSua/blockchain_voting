@@ -213,28 +213,56 @@ router.get('/me', authenticate, async (req, res) => {
       attributes: { exclude: ['passwordHash'] }
     });
 
-    // Get roles from smart contract
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        error: 'User not found'
+      });
+    }
+
+    // Get roles from smart contract (optional, don't fail if contract not deployed)
+    // Initialize with undefined to allow contract roles to override
     let roles = {
-      isOwner: false,
-      isCreator: false,
-      address: null
+      isOwner: undefined,
+      isCreator: undefined,
+      address: user.walletAddress || null
     };
 
     if (user.walletAddress) {
       try {
         const { getRoles } = require('../services/rbacService');
-        roles = await getRoles(user.walletAddress);
+        const contractRoles = await getRoles(user.walletAddress);
+        // Merge contract roles, preserving undefined values to indicate contract not available
+        roles = {
+          ...roles,
+          ...contractRoles
+        };
       } catch (roleError) {
-        console.warn('Failed to get roles from smart contract:', roleError);
-        // Continue without roles
+        // Log but don't fail - contract may not be deployed
+        if (roleError.code !== 'BAD_DATA' && !roleError.message?.includes('could not decode')) {
+          console.warn('Failed to get roles from smart contract:', roleError.message);
+        }
+        // Continue without contract roles - database role is the source of truth
+        // Keep roles as undefined to indicate contract not available
       }
     }
 
+    // Disable caching for dynamic user data
+    res.set({
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
+    });
+    
+    // Always return user with database role as primary
+    // Contract roles (isOwner, isCreator) are supplementary
     res.json({
       success: true,
       user: {
         ...user.toJSON(),
         ...roles
+        // Note: user.role from database is the primary role
+        // isOwner and isCreator from contract are supplementary checks
       }
     });
   } catch (error) {
@@ -262,20 +290,8 @@ router.put('/wallet', authenticate, [
     const { walletAddress } = req.body;
     const userId = req.userId;
 
-    // Check if wallet address is already used by another user
-    const existingUser = await User.findOne({ 
-      where: { 
-        walletAddress,
-        id: { [Op.ne]: userId }
-      } 
-    });
-
-    if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        error: 'Wallet address is already associated with another account'
-      });
-    }
+    // Normalize wallet address to lowercase for consistency
+    const normalizedAddress = walletAddress.toLowerCase();
 
     // Update user's wallet address
     const user = await User.findByPk(userId);
@@ -285,16 +301,59 @@ router.put('/wallet', authenticate, [
         error: 'User not found'
       });
     }
+    
+    // Check if address is already the same (case-insensitive)
+    if (user.walletAddress && user.walletAddress.toLowerCase() === normalizedAddress) {
+      console.log(`[PUT /api/auth/wallet] Wallet address unchanged for user ${userId}: ${normalizedAddress}`);
+      return res.json({
+        success: true,
+        message: 'Wallet address unchanged',
+        user: {
+          ...user.toJSON(),
+          walletAddress: normalizedAddress
+        }
+      });
+    }
 
-    user.walletAddress = walletAddress;
+    // Check if wallet address is already used by another user (case-insensitive)
+    const existingUser = await User.findOne({ 
+      where: { 
+        [Op.and]: [
+          {
+            [Op.or]: [
+              { walletAddress: normalizedAddress },
+              { walletAddress: walletAddress } // Also check original case
+            ]
+          },
+          { id: { [Op.ne]: userId } }
+        ]
+      } 
+    });
+
+    if (existingUser) {
+      console.log(`[PUT /api/auth/wallet] Wallet address ${normalizedAddress} already used by user ${existingUser.id}`);
+      return res.status(400).json({
+        success: false,
+        error: 'Wallet address is already associated with another account'
+      });
+    }
+
+    console.log(`[PUT /api/auth/wallet] Updating wallet address for user ${userId}: ${user.walletAddress || 'null'} -> ${normalizedAddress}`);
+    
+    user.walletAddress = normalizedAddress;
     await user.save();
+    
+    console.log(`[PUT /api/auth/wallet] Successfully updated wallet address for user ${userId}: ${normalizedAddress}`);
+
+    // Reload user from database to get latest data
+    await user.reload();
 
     // Log activity
     try {
       await createActivityLog({
         userId: user.id,
         action: 'WALLET_CONNECTED',
-        details: { walletAddress }
+        details: { walletAddress: normalizedAddress }
       });
     } catch (err) {
       console.warn('Failed to log activity:', err);

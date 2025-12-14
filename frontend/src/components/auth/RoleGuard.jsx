@@ -71,16 +71,27 @@ const RoleGuard = ({ requiredRole, children }) => {
             
             switch (requiredRole) {
               case 'OWNER':
-                // If isOwner is explicitly false (contract configured), require it
+                // If isOwner is explicitly false (contract configured and user is not owner), deny
                 // If isOwner is undefined/null (contract not configured), allow based on DB role
+                // If isOwner is true (contract configured and user is owner), allow
                 authorizedByContract = isOwner !== false;
                 break;
               case 'CREATOR':
-                // Allow if explicitly creator/owner, or if contract not configured (both undefined)
-                authorizedByContract = isCreator === true || isOwner === true || (isCreator === undefined && isOwner === undefined);
-                // But deny if explicitly false (contract configured and user is not creator)
-                if (isCreator === false && isOwner === false) {
+                // If contract is not configured (both undefined), allow based on DB role
+                if (isCreator === undefined && isOwner === undefined) {
+                  authorizedByContract = true;
+                }
+                // If contract is configured and user is creator/owner, allow
+                else if (isCreator === true || isOwner === true) {
+                  authorizedByContract = true;
+                }
+                // If contract is configured and user is explicitly not creator/owner, deny
+                else if (isCreator === false && isOwner === false) {
                   authorizedByContract = false;
+                }
+                // Default: allow (shouldn't reach here, but be safe)
+                else {
+                  authorizedByContract = true;
                 }
                 break;
               default:
@@ -101,10 +112,18 @@ const RoleGuard = ({ requiredRole, children }) => {
           setIsLoading(false);
         }
       } else {
-        // No wallet address - allow based on database role for now
-        // User can connect wallet later if needed
-        setIsAuthorized(true);
-        setIsLoading(false);
+        // No wallet address - for CREATOR and VOTER, require wallet connection
+        // OWNER can use system wallet, so they don't need MetaMask
+        if (requiredRole === 'CREATOR' || requiredRole === 'VOTER') {
+          // Redirect to wallet onboarding if wallet address is missing
+          setIsAuthorized(false);
+          setIsLoading(false);
+          // Note: Navigation will be handled by redirect below
+        } else {
+          // OWNER doesn't need wallet address
+          setIsAuthorized(true);
+          setIsLoading(false);
+        }
       }
     };
 
@@ -127,8 +146,16 @@ const RoleGuard = ({ requiredRole, children }) => {
   }
 
   if (!isAuthorized) {
-    // If token is invalid or user doesn't have permission, redirect to login
-    // Don't show "Access Denied" page - just redirect to login
+    // Check if user is missing wallet address (for CREATOR/VOTER)
+    const walletAddress = user?.walletAddress || user?.wallet_address;
+    const userRole = user?.role;
+    
+    // If user is CREATOR or VOTER and missing wallet address, redirect to wallet onboarding
+    if ((userRole === 'CREATOR' || userRole === 'VOTER') && !walletAddress) {
+      return <Navigate to="/auth/wallet-onboarding" state={{ from: location }} replace />;
+    }
+    
+    // Otherwise, redirect to login (token invalid or no permission)
     return <Navigate to="/auth/login" state={{ from: location }} replace />;
   }
 

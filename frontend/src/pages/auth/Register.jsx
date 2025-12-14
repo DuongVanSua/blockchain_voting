@@ -1,12 +1,9 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { ethers } from 'ethers';
 import useAuthStore from '../../store/useAuthStore';
 import { useAppStore } from '../../store/useAppStore';
 import Checkbox from '../../components/common/Checkbox';
 import Alert from '../../components/common/Alert';
-import PrivateKeyDisplay from '../../components/wallet/PrivateKeyDisplay';
-import apiService from '../../services/apiService';
 import { toast } from 'react-hot-toast';
 
 
@@ -26,8 +23,6 @@ const Register = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [generatedWallet, setGeneratedWallet] = useState(null);
-  const [showPrivateKey, setShowPrivateKey] = useState(false);
 
   const getPasswordStrength = (password) => {
     if (!password) {
@@ -131,50 +126,6 @@ const Register = () => {
       );
 
       if (result.success) {
-        // Generate wallet for voter
-        const wallet = ethers.Wallet.createRandom();
-        const walletAddress = wallet.address;
-        const privateKey = wallet.privateKey;
-
-        // Save wallet address to database (NOT private key)
-        try {
-          const updateResult = await apiService.updateWalletAddress(walletAddress);
-          if (!updateResult.success) {
-            // eslint-disable-next-line no-console
-            console.warn('Failed to save wallet address:', updateResult.error);
-            toast.error('Đăng ký thành công nhưng không thể lưu địa chỉ ví. Vui lòng cập nhật sau.');
-          }
-        } catch (error) {
-          // eslint-disable-next-line no-console
-          console.error('Error saving wallet address:', error);
-          toast.error('Đăng ký thành công nhưng không thể lưu địa chỉ ví. Vui lòng cập nhật sau.');
-        }
-
-        // Store generated wallet temporarily (will be cleared after user confirms)
-        setGeneratedWallet({
-          address: walletAddress,
-          privateKey: privateKey,
-        });
-
-        // Update user in auth store with wallet address
-        const { updateUser } = useAuthStore.getState();
-        if (updateUser) {
-          updateUser({
-            walletAddress: walletAddress,
-            wallet_address: walletAddress,
-          });
-        }
-
-        // Sync wallet address to app store
-        const { syncUserFromAuth } = useAppStore.getState();
-        if (syncUserFromAuth) {
-          syncUserFromAuth({
-            ...result.user,
-            walletAddress: walletAddress,
-            wallet_address: walletAddress,
-          });
-        }
-
         addUser({
           name: formData.name,
           email: formData.email,
@@ -182,9 +133,11 @@ const Register = () => {
           role: 'VOTER',
         });
 
-        // Show private key display
-        setShowPrivateKey(true);
-        toast.success('Đăng ký thành công! Vui lòng lưu private key của bạn.');
+        toast.success('Đăng ký thành công! Vui lòng kết nối MetaMask để tiếp tục.');
+        // Navigate to wallet onboarding - user will need to click button to connect
+        window.setTimeout(() => {
+          navigate('/auth/wallet-onboarding');
+        }, 500);
       } else {
         const errorMsg = result.error || 'Đăng ký thất bại';
         setErrors({ submit: typeof errorMsg === 'string' ? errorMsg : 'Đăng ký thất bại' });
@@ -199,37 +152,6 @@ const Register = () => {
       setIsLoading(false);
     }
   };
-
-  const handlePrivateKeyConfirmed = () => {
-    // Clear private key from memory
-    setGeneratedWallet(null);
-    setShowPrivateKey(false);
-    
-    // Navigate to wallet onboarding or dashboard
-    window.setTimeout(() => {
-      navigate('/auth/wallet-onboarding');
-    }, 500);
-  };
-
-  // Show private key display if wallet was generated
-  if (showPrivateKey && generatedWallet) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-600 via-purple-600 to-pink-600 py-12 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
-        {/* Background decoration */}
-        <div className="absolute inset-0 overflow-hidden">
-          <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-300 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob"></div>
-          <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-yellow-300 rounded-full mix-blend-multiply filter blur-xl opacity-20 animate-blob animation-delay-2000"></div>
-        </div>
-        <div className="relative z-10">
-          <PrivateKeyDisplay
-            privateKey={generatedWallet.privateKey}
-            walletAddress={generatedWallet.address}
-            onConfirm={handlePrivateKeyConfirmed}
-          />
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-600 via-purple-600 to-pink-600 py-12 px-4 sm:px-6 lg:px-8 relative overflow-hidden">

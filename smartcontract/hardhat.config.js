@@ -14,7 +14,11 @@ module.exports = {
         enabled: true,
         runs: 1, // Low runs to minimize contract size
       },
+      viaIR: true, // Use IR-based optimizer for better size optimization
       evmVersion: "shanghai",
+      metadata: {
+        bytecodeHash: "none", // Remove metadata hash to reduce size
+      },
     },
   },
   networks: {

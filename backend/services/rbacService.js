@@ -140,28 +140,76 @@ async function getRoles(address) {
       };
     }
     
-    const factory = await getElectionFactory();
+    // Try to get factory, but don't fail if contract not deployed
+    let factory = null;
+    let contractDeployed = false;
+    try {
+      factory = await getElectionFactory();
+      contractDeployed = true;
+    } catch (error) {
+      // Contract not deployed, return undefined to indicate contract not available
+      if (error.message?.includes('Deployment file not found') || error.message?.includes('not found')) {
+        console.warn('Contract not deployed, returning undefined roles');
+        return {
+          isOwner: undefined, // undefined = contract not deployed
+          isCreator: undefined, // undefined = contract not deployed
+          address: address
+        };
+      }
+      throw error; // Re-throw if it's a different error
+    }
     
     // Use try-catch for each call to handle individual errors
     let owner = null;
     let isCreatorRole = false;
+    let contractAvailable = false;
     
     try {
       owner = await factory.owner();
       // Check if owner is valid (not empty or zero address)
       if (!owner || owner === '0x' || owner === '0x0000000000000000000000000000000000000000') {
         owner = null;
+        contractAvailable = false;
+      } else {
+        contractAvailable = true;
       }
     } catch (error) {
-      console.warn('Error getting owner from contract:', error.message);
+      // Handle decode errors gracefully
+      if (error.code === 'BAD_DATA' || error.message?.includes('could not decode')) {
+        console.warn('Error getting owner from contract (decode error):', error.message);
+        contractAvailable = false;
+      } else {
+        console.warn('Error getting owner from contract:', error.message);
+        contractAvailable = false;
+      }
       owner = null;
+    }
+    
+    // If contract is not available (no code), return undefined
+    if (!contractAvailable) {
+      return {
+        isOwner: undefined, // undefined = contract not available
+        isCreator: undefined, // undefined = contract not available
+        address: address
+      };
     }
     
     try {
       isCreatorRole = await factory.isCreator(address);
     } catch (error) {
-      console.warn('Error checking creator role:', error.message);
-      isCreatorRole = false;
+      // Handle decode errors gracefully
+      if (error.code === 'BAD_DATA' || error.message?.includes('could not decode')) {
+        console.warn('Error checking creator role (decode error):', error.message);
+        // If decode error, contract is not available
+        return {
+          isOwner: undefined,
+          isCreator: undefined,
+          address: address
+        };
+      } else {
+        console.warn('Error checking creator role:', error.message);
+        isCreatorRole = false;
+      }
     }
     
     return {
@@ -170,11 +218,11 @@ async function getRoles(address) {
       address: address
     };
   } catch (error) {
-    // If contract doesn't exist or is not deployed, return default values
+    // If contract doesn't exist or is not deployed, return undefined to indicate contract not available
     console.warn('Error getting roles (contract may not be deployed):', error.message);
     return {
-      isOwner: false,
-      isCreator: false,
+      isOwner: undefined, // undefined = contract not available
+      isCreator: undefined, // undefined = contract not available
       address: address
     };
   }

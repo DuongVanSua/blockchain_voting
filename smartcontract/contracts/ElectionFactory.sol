@@ -32,6 +32,22 @@ interface IElection {
  * - VOTER: Can register and vote in elections
  */
 contract ElectionFactory {
+    // Custom errors to save gas and reduce contract size
+    error OnlyOwner();
+    error OnlyCreator();
+    error SystemIsPaused();
+    error InvalidAddress();
+    error InvalidTimeRange();
+    error StartTimeNotInFuture();
+    error EmptyTitle();
+    error EmptyIpfsCid();
+    error FailedToDeployElection();
+    error AlreadyCreator();
+    error NotCreator();
+    error AlreadyPaused();
+    error NotPaused();
+    error InvalidElectionId();
+    
     struct ElectionInfo {
         address electionAddress;
         uint256 electionId;
@@ -115,23 +131,23 @@ contract ElectionFactory {
     uint256 public totalElections;
 
     modifier onlyOwner() {
-        require(msg.sender == owner, "Only owner can perform this action");
+        if (msg.sender != owner) revert OnlyOwner();
         _;
     }
 
     modifier onlyCreator() {
-        require(creators[msg.sender], "Only creators can perform this action");
+        if (!creators[msg.sender]) revert OnlyCreator();
         _;
     }
 
     modifier whenNotPaused() {
-        require(!isPaused, "System is paused");
+        if (isPaused) revert SystemIsPaused();
         _;
     }
 
     constructor(address _voterRegistry, address _votingToken) {
-        require(_voterRegistry != address(0), "Invalid voter registry");
-        require(_votingToken != address(0), "Invalid voting token");
+        if (_voterRegistry == address(0)) revert InvalidAddress();
+        if (_votingToken == address(0)) revert InvalidAddress();
         
         owner = msg.sender;
         creators[msg.sender] = true; // Owner is also a creator by default
@@ -161,15 +177,30 @@ contract ElectionFactory {
         bool _allowRealtimeResults,
         string memory _ipfsCid
     ) external onlyCreator whenNotPaused returns (address) {
-        require(_endTime > _startTime, "End time must be after start time");
-        require(_startTime > block.timestamp, "Start time must be in future");
-        require(bytes(_title).length > 0, "Title cannot be empty");
-        require(bytes(_ipfsCid).length > 0, "IPFS CID cannot be empty");
+        if (_endTime <= _startTime) revert InvalidTimeRange();
+        if (_startTime <= block.timestamp) revert StartTimeNotInFuture();
+        if (bytes(_title).length == 0) revert EmptyTitle();
+        if (bytes(_ipfsCid).length == 0) revert EmptyIpfsCid();
         
         uint256 electionId = totalElections + 1;
 
-        // Deploy new Election contract
-        Election newElection = new Election(
+        // Generate unique salt for CREATE2 deployment
+        // Salt = keccak256(electionId, creator address, timestamp, ipfsCid)
+        // This ensures each election gets a unique address even if nonce resets
+        bytes32 salt = keccak256(
+            abi.encodePacked(
+                electionId,
+                msg.sender,
+                block.timestamp,
+                block.prevrandao, // Add block randomness for extra uniqueness
+                _ipfsCid
+            )
+        );
+
+        // Deploy new Election contract using CREATE2 for deterministic but unique addresses
+        // CREATE2 formula: address = keccak256(0xff ++ deployer ++ salt ++ keccak256(init_code))[12:]
+        bytes memory bytecode = type(Election).creationCode;
+        bytes memory constructorArgs = abi.encode(
             electionId,
             _title,
             _description,
@@ -181,9 +212,19 @@ contract ElectionFactory {
             _allowRealtimeResults,
             _ipfsCid
         );
-
-        address electionAddress = address(newElection);
-        require(electionAddress != address(0), "Failed to deploy election contract");
+        bytes memory initCode = abi.encodePacked(bytecode, constructorArgs);
+        
+        // Deploy using CREATE2 via inline assembly
+        address electionAddress;
+        assembly {
+            let ptr := add(initCode, 0x20)
+            let length := mload(initCode)
+            electionAddress := create2(0, ptr, length, salt)
+        }
+        
+        if (electionAddress == address(0)) revert FailedToDeployElection();
+        
+        Election newElection = Election(electionAddress);
 
         // Transfer chairperson to the creator
         newElection.transferChairperson(msg.sender);
@@ -213,8 +254,8 @@ contract ElectionFactory {
      * @notice Owner: Add a new election creator
      */
     function addCreator(address _creator) external onlyOwner {
-        require(_creator != address(0), "Invalid creator address");
-        require(!creators[_creator], "Already a creator");
+        if (_creator == address(0)) revert InvalidAddress();
+        if (creators[_creator]) revert AlreadyCreator();
         
         creators[_creator] = true;
         creatorAddresses.push(_creator);
@@ -226,8 +267,8 @@ contract ElectionFactory {
      * @notice Owner: Remove an election creator
      */
     function removeCreator(address _creator) external onlyOwner {
-        require(creators[_creator], "Not a creator");
-        require(_creator != owner, "Cannot remove owner");
+        if (!creators[_creator]) revert NotCreator();
+        if (_creator == owner) revert InvalidAddress(); // Cannot remove owner
         
         creators[_creator] = false;
         
@@ -238,7 +279,7 @@ contract ElectionFactory {
      * @notice Owner: Pause the entire system (emergency)
      */
     function pause() external onlyOwner {
-        require(!isPaused, "System already paused");
+        if (isPaused) revert AlreadyPaused();
         isPaused = true;
         emit SystemPaused(msg.sender, block.timestamp);
     }
@@ -247,7 +288,7 @@ contract ElectionFactory {
      * @notice Owner: Unpause the system
      */
     function unpause() external onlyOwner {
-        require(isPaused, "System not paused");
+        if (!isPaused) revert NotPaused();
         isPaused = false;
         emit SystemUnpaused(msg.sender, block.timestamp);
     }
@@ -256,8 +297,8 @@ contract ElectionFactory {
      * @notice Owner: Deactivate an election
      */
     function deactivateElection(uint256 _electionId) external onlyOwner {
-        require(_electionId > 0 && _electionId <= totalElections, "Invalid election ID");
-        require(elections[_electionId].isActive, "Election already inactive");
+        if (_electionId == 0 || _electionId > totalElections) revert InvalidElectionId();
+        if (!elections[_electionId].isActive) revert InvalidElectionId(); // Election already inactive
         
         elections[_electionId].isActive = false;
         address electionAddress = elections[_electionId].electionAddress;
@@ -283,7 +324,7 @@ contract ElectionFactory {
      * @notice Get election info
      */
     function getElection(uint256 _electionId) external view returns (ElectionInfo memory) {
-        require(_electionId > 0 && _electionId <= totalElections, "Invalid election ID");
+        if (_electionId == 0 || _electionId > totalElections) revert InvalidElectionId();
         return elections[_electionId];
     }
 
@@ -344,7 +385,7 @@ contract ElectionFactory {
      * @notice Owner: Update voter registry
      */
     function updateVoterRegistry(address _newRegistry) external onlyOwner {
-        require(_newRegistry != address(0), "Invalid address");
+        if (_newRegistry == address(0)) revert InvalidAddress();
         
         address oldRegistry = voterRegistry;
         voterRegistry = _newRegistry;
@@ -356,7 +397,7 @@ contract ElectionFactory {
      * @notice Owner: Update voting token
      */
     function updateVotingToken(address _newToken) external onlyOwner {
-        require(_newToken != address(0), "Invalid address");
+        if (_newToken == address(0)) revert InvalidAddress();
         
         address oldToken = votingToken;
         votingToken = _newToken;
@@ -368,7 +409,7 @@ contract ElectionFactory {
      * @notice Owner: Transfer ownership
      */
     function transferOwnership(address _newOwner) external onlyOwner {
-        require(_newOwner != address(0), "Invalid address");
+        if (_newOwner == address(0)) revert InvalidAddress();
         
         address oldOwner = owner;
         owner = _newOwner;

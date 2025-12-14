@@ -3,7 +3,9 @@ import apiService from './apiService';
 class IPFSService {
   async uploadJSON(data) {
     try {
-      const result = await apiService.request('/api/ipfs/upload', {
+      // Use full URL from API_ENDPOINTS to ensure correct baseURL
+      const { API_ENDPOINTS } = await import('../config/api');
+      const result = await apiService.request(API_ENDPOINTS.IPFS.UPLOAD_JSON, {
         method: 'POST',
         body: { data },
       });
@@ -30,6 +32,34 @@ class IPFSService {
       return {
         success: false,
         error: error.message || 'Failed to get from IPFS',
+      };
+    }
+  }
+
+  async getFile(hash) {
+    try {
+      // Get file from IPFS gateway directly
+      const gatewayUrl = import.meta.env.VITE_IPFS_GATEWAY_URL || 'https://ipfs.io/ipfs/';
+      const url = `${gatewayUrl}${hash}`;
+      
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch file: ${response.status}`);
+      }
+      
+      const blob = await response.blob();
+      return {
+        success: true,
+        blob,
+        url,
+        hash,
+      };
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('IPFS get file error:', error);
+      return {
+        success: false,
+        error: error.message || 'Failed to get file from IPFS',
       };
     }
   }

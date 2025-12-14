@@ -12,6 +12,7 @@
     "deploy:localhost": "hardhat run scripts/deploy.js --network localhost",
     "deploy:local": "hardhat run scripts/deploy-local.js --network hardhat",
     "deploy:sepolia": "hardhat run scripts/deploy.js --network sepolia",
+    "deploy:metamask": "echo 'Please open deploy-metamask-browser.html in your browser' && echo 'Or use: open scripts/deploy-metamask-browser.html'",
     "clean": "hardhat clean",
     "copy-abi": "node scripts/copy-abi.js",
     "build": "npm run compile && npm run copy-abi"

@@ -4,6 +4,7 @@ const { authenticate } = require('../middleware/auth');
 const { ethers } = require('ethers');
 const Vote = require('../models/Vote');
 const Election = require('../models/Election');
+const Candidate = require('../models/Candidate');
 const { createActivityLog } = require('../services/activityService');
 const { getAdminSigner, getProvider } = require('../config/blockchain');
 
@@ -55,6 +56,26 @@ router.post('/', [
       transactionHash,
       receiptIpfsHash,
     });
+
+    // Update candidate voteCount in database
+    try {
+      const candidate = await Candidate.findOne({
+        where: {
+          electionId: electionId,
+          candidateIndex: candidateId
+        }
+      });
+
+      if (candidate) {
+        await candidate.increment('voteCount');
+        console.log(`[POST /api/votes] Updated candidate ${candidateId} voteCount for election ${electionId}`);
+      } else {
+        console.warn(`[POST /api/votes] Candidate not found: electionId=${electionId}, candidateIndex=${candidateId}`);
+      }
+    } catch (candidateError) {
+      console.error(`[POST /api/votes] Failed to update candidate voteCount:`, candidateError);
+      // Don't fail the vote creation if candidate update fails
+    }
 
     // Log activity
     try {
@@ -336,6 +357,26 @@ router.post('/relay', [
         transactionHash: receipt.hash,
         receiptIpfsHash: null, // Can be uploaded to IPFS later
       });
+
+      // Update candidate voteCount in database
+      try {
+        const candidate = await Candidate.findOne({
+          where: {
+            electionId: electionId,
+            candidateIndex: candidateId
+          }
+        });
+
+        if (candidate) {
+          await candidate.increment('voteCount');
+          console.log(`[POST /api/votes/relay] Updated candidate ${candidateId} voteCount for election ${electionId}`);
+        } else {
+          console.warn(`[POST /api/votes/relay] Candidate not found: electionId=${electionId}, candidateIndex=${candidateId}`);
+        }
+      } catch (candidateError) {
+        console.error(`[POST /api/votes/relay] Failed to update candidate voteCount:`, candidateError);
+        // Don't fail the vote creation if candidate update fails
+      }
 
       // Log activity
       try {

@@ -297,6 +297,12 @@ contract Election {
         emit CandidateRemoved(_candidateId, candidates[_candidateId].name, msg.sender);
     }
 
+    /**
+     * @notice Manually start election (OPTIONAL - election will auto-start at startTime)
+     * @dev This function is optional. Election will automatically start when startTime is reached.
+     * Creator can call this to start early if needed, but it's not required.
+     * When a voter tries to vote and startTime has been reached, election will auto-start.
+     */
     function startElection() external onlyChairperson {
         require(state == ElectionState.CREATED, "Election already started");
         require(block.timestamp >= startTime, "Cannot start before scheduled time");
@@ -348,7 +354,30 @@ contract Election {
         emit ElectionEnded(electionId, block.timestamp);
     }
 
+    /**
+     * @notice Check and auto-start/end election based on time
+     * @dev Can be called by anyone to update election state based on current time
+     * Auto-starts election when startTime is reached (if still in CREATED state)
+     * Auto-ends election when endTime is reached
+     */
     function checkAndEndElection() external {
+        // Auto-start if startTime reached and still in CREATED state
+        if (state == ElectionState.CREATED && block.timestamp >= startTime) {
+            require(totalCandidates >= 2, "Need at least 2 candidates");
+            
+            uint256 activeCount = 0;
+            for (uint256 i = 0; i < candidateIds.length; i++) {
+                if (candidates[candidateIds[i]].isActive) {
+                    activeCount++;
+                }
+            }
+            require(activeCount >= 2, "Need at least 2 active candidates");
+            
+            state = ElectionState.ONGOING;
+            emit ElectionStarted(electionId, block.timestamp);
+        }
+        
+        // Auto-end if endTime reached
         if (block.timestamp >= endTime) {
             if (state == ElectionState.ONGOING || state == ElectionState.PAUSED) {
                 state = ElectionState.ENDED;
@@ -358,6 +387,23 @@ contract Election {
     }
 
     function vote(uint256 _candidateId, bytes32 _voteHash) external {
+        // Auto-start election if startTime has been reached
+        if (state == ElectionState.CREATED && block.timestamp >= startTime) {
+            require(totalCandidates >= 2, "Need at least 2 candidates");
+            
+            uint256 activeCount = 0;
+            for (uint256 i = 0; i < candidateIds.length; i++) {
+                if (candidates[candidateIds[i]].isActive) {
+                    activeCount++;
+                }
+            }
+            require(activeCount >= 2, "Need at least 2 active candidates");
+            
+            state = ElectionState.ONGOING;
+            emit ElectionStarted(electionId, block.timestamp);
+        }
+        
+        // Auto-end election if endTime has been reached
         if (block.timestamp >= endTime && (state == ElectionState.ONGOING || state == ElectionState.PAUSED)) {
             state = ElectionState.ENDED;
             emit ElectionEnded(electionId, block.timestamp);
@@ -410,6 +456,23 @@ contract Election {
         bytes32 _voteHash,
         bytes memory _signature
     ) external {
+        // Auto-start election if startTime has been reached
+        if (state == ElectionState.CREATED && block.timestamp >= startTime) {
+            require(totalCandidates >= 2, "Need at least 2 candidates");
+            
+            uint256 activeCount = 0;
+            for (uint256 i = 0; i < candidateIds.length; i++) {
+                if (candidates[candidateIds[i]].isActive) {
+                    activeCount++;
+                }
+            }
+            require(activeCount >= 2, "Need at least 2 active candidates");
+            
+            state = ElectionState.ONGOING;
+            emit ElectionStarted(electionId, block.timestamp);
+        }
+        
+        // Auto-end election if endTime has been reached
         if (block.timestamp >= endTime && (state == ElectionState.ONGOING || state == ElectionState.PAUSED)) {
             state = ElectionState.ENDED;
             emit ElectionEnded(electionId, block.timestamp);
@@ -661,6 +724,69 @@ contract Election {
         if (_requireToken) {
             require(_tokenAmount > 0, "Token amount must be greater than 0");
             votingTokenAmount = _tokenAmount;
+        }
+        
+        emit ElectionConfigUpdated(msg.sender, block.timestamp);
+    }
+
+    /**
+     * @notice Initialize election with config and candidates in one transaction
+     * @param _isPublic Whether election is public
+     * @param _requireToken Whether token is required to vote
+     * @param _tokenAmount Token amount required (if requireToken is true)
+     * @param _candidateNames Array of candidate names
+     * @param _candidateParties Array of candidate parties
+     * @param _candidateAges Array of candidate ages
+     * @param _candidateManifestos Array of candidate manifestos
+     * @param _candidateImageHashes Array of candidate image hashes
+     */
+    function initializeElectionWithCandidates(
+        bool _isPublic,
+        bool _requireToken,
+        uint256 _tokenAmount,
+        string[] memory _candidateNames,
+        string[] memory _candidateParties,
+        uint256[] memory _candidateAges,
+        string[] memory _candidateManifestos,
+        bytes32[] memory _candidateImageHashes
+    ) external onlyElectionCreator {
+        require(state == ElectionState.CREATED, "Can only initialize before election starts");
+        require(_candidateNames.length == _candidateParties.length, "Arrays length mismatch");
+        require(_candidateNames.length == _candidateAges.length, "Arrays length mismatch");
+        require(_candidateNames.length == _candidateManifestos.length, "Arrays length mismatch");
+        require(_candidateNames.length == _candidateImageHashes.length, "Arrays length mismatch");
+        require(_candidateNames.length >= 2, "Need at least 2 candidates");
+        
+        // Update election config
+        isPublic = _isPublic;
+        requireToken = _requireToken;
+        if (_requireToken) {
+            require(_tokenAmount > 0, "Token amount must be greater than 0");
+            votingTokenAmount = _tokenAmount;
+        }
+        
+        // Add all candidates
+        for (uint256 i = 0; i < _candidateNames.length; i++) {
+            require(bytes(_candidateNames[i]).length > 0, "Candidate name cannot be empty");
+            require(_candidateAges[i] >= 18, "Candidate must be at least 18 years old");
+            
+            uint256 candidateId = totalCandidates + 1;
+            
+            candidates[candidateId] = Candidate({
+                candidateId: candidateId,
+                name: _candidateNames[i],
+                party: _candidateParties[i],
+                age: _candidateAges[i],
+                manifesto: _candidateManifestos[i],
+                imageHash: _candidateImageHashes[i],
+                voteCount: 0,
+                isActive: true
+            });
+            
+            candidateIds.push(candidateId);
+            totalCandidates++;
+            
+            emit CandidateAdded(candidateId, _candidateNames[i], _candidateParties[i], msg.sender);
         }
         
         emit ElectionConfigUpdated(msg.sender, block.timestamp);
