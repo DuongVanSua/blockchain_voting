@@ -14,6 +14,7 @@ const electionRoutes = require('./routes/elections');
 const kycRoutes = require('./routes/kyc');
 const ipfsRoutes = require('./routes/ipfs');
 const activityRoutes = require('./routes/activities');
+const activityLogRoutes = require('./routes/activityLogs');
 const dashboardRoutes = require('./routes/dashboard');
 const voteRoutes = require('./routes/votes');
 const ownerRoutes = require('./routes/owner');
@@ -84,6 +85,7 @@ app.use('/api/elections', electionRoutes);
 app.use('/api/kyc', kycRoutes);
 app.use('/api/ipfs', ipfsRoutes);
 app.use('/api/activities', activityRoutes);
+app.use('/api/activity-logs', activityLogRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/votes', voteRoutes);
 // RBAC routes

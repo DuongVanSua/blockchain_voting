@@ -13,6 +13,7 @@ import Modal from '../../components/common/Modal';
 import Skeleton from '../../components/common/Skeleton';
 import EmptyState from '../../components/common/EmptyState';
 import { ethers } from 'ethers';
+import ActivityLogPanel from '../../components/logs/ActivityLogPanel';
 
 const VoterDashboardRBAC = () => {
   const navigate = useNavigate();
@@ -1104,6 +1105,11 @@ const VoterDashboardRBAC = () => {
           </div>
         </Modal>
       )}
+
+      {/* Activity Log */}
+      <Card title="Activity Log" className="mt-6">
+        <ActivityLogPanel />
+      </Card>
 
       {/* Candidate Detail Modal */}
       {showCandidateDetail && (

@@ -6,6 +6,7 @@ import Button from '../../components/common/Button';
 import Badge from '../../components/common/Badge';
 import Modal from '../../components/common/Modal';
 import Skeleton from '../../components/common/Skeleton';
+import ActivityLogPanel from '../../components/logs/ActivityLogPanel';
 
 const OwnerDashboard = () => {
   const [systemStatus, setSystemStatus] = useState(null);
@@ -574,6 +575,10 @@ const OwnerDashboard = () => {
             </div>
           )}
         </div>
+      </Card>
+
+      <Card title="Activity Log">
+        <ActivityLogPanel />
       </Card>
 
       {/* Add Creator Modal */}

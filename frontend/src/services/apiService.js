@@ -781,6 +781,11 @@ class APIService {
   async getElectionStatus(electionAddress) {
     return this.request(API_ENDPOINTS.VOTER.STATUS(electionAddress));
   }
+
+  // Generic GET helper
+  async get(url, options = {}) {
+    return this.request(url, { method: 'GET', ...options });
+  }
 }
 
 

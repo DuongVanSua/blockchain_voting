@@ -4,10 +4,21 @@ export const formatAddress = (address) => {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 };
 
+export const formatAddressShort = (address) => formatAddress(address);
+
 
 export const formatDate = (timestamp) => {
   if (!timestamp) return '';
   return new Date(timestamp * 1000).toLocaleString('vi-VN');
+};
+
+export const formatDateTime = (ms) => {
+  if (!ms) return '';
+  try {
+    return new Date(ms).toLocaleString('vi-VN');
+  } catch (e) {
+    return '';
+  }
 };
 
 

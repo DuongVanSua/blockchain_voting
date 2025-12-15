@@ -12,6 +12,7 @@ import Modal from '../../components/common/Modal';
 import Skeleton from '../../components/common/Skeleton';
 import EmptyState from '../../components/common/EmptyState';
 import WalletGuard from '../../components/wallet/WalletGuard';
+import ActivityLogPanel from '../../components/logs/ActivityLogPanel';
 
 const CreatorDashboard = () => {
   const navigate = useNavigate();
@@ -1144,6 +1145,11 @@ const CreatorDashboard = () => {
           </div>
         </Modal>
       )}
+
+      {/* Activity Log */}
+      <Card title="Activity Log" className="mt-6">
+        <ActivityLogPanel />
+      </Card>
 
       {/* End Election Modal */}
       {showEndElection && (
