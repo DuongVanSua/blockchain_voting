@@ -53,14 +53,14 @@ describe("ElectionFactory Contract", function () {
       const ElectionFactory = await ethers.getContractFactory("ElectionFactory");
       await expect(
         ElectionFactory.deploy(ethers.ZeroAddress, await votingToken.getAddress())
-      ).to.be.revertedWith("Invalid voter registry");
+      ).to.be.revertedWithCustomError(ElectionFactory, "InvalidAddress");
     });
 
     it("Should revert if voting token is zero address", async function () {
       const ElectionFactory = await ethers.getContractFactory("ElectionFactory");
       await expect(
         ElectionFactory.deploy(await voterRegistry.getAddress(), ethers.ZeroAddress)
-      ).to.be.revertedWith("Invalid voting token");
+      ).to.be.revertedWithCustomError(ElectionFactory, "InvalidAddress");
     });
   });
 
@@ -137,7 +137,7 @@ describe("ElectionFactory Contract", function () {
           true,
           "QmTestIPFSCID"
         )
-      ).to.be.revertedWith("Only creators can perform this action");
+      ).to.be.revertedWithCustomError(factory, "OnlyCreator");
     });
 
     it("Should not allow creating election with end time before start time", async function () {
@@ -156,7 +156,7 @@ describe("ElectionFactory Contract", function () {
           true,
           "QmTestIPFSCID"
         )
-      ).to.be.revertedWith("End time must be after start time");
+      ).to.be.revertedWithCustomError(factory, "InvalidTimeRange");
     });
 
     it("Should not allow creating election with start time in the past", async function () {
@@ -175,7 +175,7 @@ describe("ElectionFactory Contract", function () {
           true,
           "QmTestIPFSCID"
         )
-      ).to.be.revertedWith("Start time must be in future");
+      ).to.be.revertedWithCustomError(factory, "StartTimeNotInFuture");
     });
 
     it("Should not allow creating election with empty title", async function () {
@@ -194,7 +194,7 @@ describe("ElectionFactory Contract", function () {
           true,
           "QmTestIPFSCID"
         )
-      ).to.be.revertedWith("Title cannot be empty");
+      ).to.be.revertedWithCustomError(factory, "EmptyTitle");
     });
 
     it("Should increment totalElections for each new election", async function () {
@@ -265,7 +265,7 @@ describe("ElectionFactory Contract", function () {
     it("Should revert when getting invalid election ID", async function () {
       await expect(
         factory.getElection(999)
-      ).to.be.revertedWith("Invalid election ID");
+      ).to.be.revertedWithCustomError(factory, "InvalidElectionId");
     });
 
     it("Should get all elections", async function () {
@@ -341,13 +341,13 @@ describe("ElectionFactory Contract", function () {
     it("Should not allow non-owner to deactivate", async function () {
       await expect(
         factory.connect(nonOwner).deactivateElection(1)
-      ).to.be.revertedWith("Only owner can perform this action");
+      ).to.be.revertedWithCustomError(factory, "OnlyOwner");
     });
 
     it("Should not allow deactivating invalid election ID", async function () {
       await expect(
         factory.deactivateElection(999)
-      ).to.be.revertedWith("Invalid election ID");
+      ).to.be.revertedWithCustomError(factory, "InvalidElectionId");
     });
 
     it("Should not allow deactivating already inactive election", async function () {
@@ -355,7 +355,7 @@ describe("ElectionFactory Contract", function () {
 
       await expect(
         factory.deactivateElection(1)
-      ).to.be.revertedWith("Election already inactive");
+      ).to.be.revertedWithCustomError(factory, "InvalidElectionId");
     });
   });
 
@@ -395,11 +395,11 @@ describe("ElectionFactory Contract", function () {
     it("Should not allow updating to zero address", async function () {
       await expect(
         factory.updateVoterRegistry(ethers.ZeroAddress)
-      ).to.be.revertedWith("Invalid address");
+      ).to.be.revertedWithCustomError(factory, "InvalidAddress");
 
       await expect(
         factory.updateVotingToken(ethers.ZeroAddress)
-      ).to.be.revertedWith("Invalid address");
+      ).to.be.revertedWithCustomError(factory, "InvalidAddress");
     });
   });
 
@@ -419,13 +419,195 @@ describe("ElectionFactory Contract", function () {
     it("Should not allow transferring to zero address", async function () {
       await expect(
         factory.transferOwnership(ethers.ZeroAddress)
-      ).to.be.revertedWith("Invalid address");
+      ).to.be.revertedWithCustomError(factory, "InvalidAddress");
     });
 
     it("Should not allow non-owner to transfer ownership", async function () {
       await expect(
         factory.connect(nonOwner).transferOwnership(creator1.address)
-      ).to.be.revertedWith("Only owner can perform this action");
+      ).to.be.revertedWithCustomError(factory, "OnlyOwner");
+    });
+  });
+
+  describe("Creator Management", function () {
+    it("Should allow owner to add creator", async function () {
+      const tx = await factory.addCreator(creator1.address);
+      const receipt = await tx.wait();
+      const block = await ethers.provider.getBlock(receipt.blockNumber);
+
+      await expect(tx)
+        .to.emit(factory, "CreatorAdded")
+        .withArgs(creator1.address, owner.address, block.timestamp);
+
+      expect(await factory.isCreator(creator1.address)).to.be.true;
+    });
+
+    it("Should not allow non-owner to add creator", async function () {
+      await expect(
+        factory.connect(nonOwner).addCreator(creator1.address)
+      ).to.be.revertedWithCustomError(factory, "OnlyOwner");
+    });
+
+    it("Should not allow adding zero address as creator", async function () {
+      await expect(
+        factory.addCreator(ethers.ZeroAddress)
+      ).to.be.revertedWithCustomError(factory, "InvalidAddress");
+    });
+
+    it("Should not allow adding existing creator", async function () {
+      await factory.addCreator(creator1.address);
+
+      await expect(
+        factory.addCreator(creator1.address)
+      ).to.be.revertedWithCustomError(factory, "AlreadyCreator");
+    });
+
+    it("Should allow owner to remove creator", async function () {
+      await factory.addCreator(creator1.address);
+      
+      const tx = await factory.removeCreator(creator1.address);
+      const receipt = await tx.wait();
+      const block = await ethers.provider.getBlock(receipt.blockNumber);
+
+      await expect(tx)
+        .to.emit(factory, "CreatorRemoved")
+        .withArgs(creator1.address, owner.address, block.timestamp);
+
+      expect(await factory.isCreator(creator1.address)).to.be.false;
+    });
+
+    it("Should not allow removing non-creator", async function () {
+      await expect(
+        factory.removeCreator(creator1.address)
+      ).to.be.revertedWithCustomError(factory, "NotCreator");
+    });
+
+    it("Should not allow removing owner as creator", async function () {
+      await expect(
+        factory.removeCreator(owner.address)
+      ).to.be.revertedWithCustomError(factory, "InvalidAddress");
+    });
+
+    it("Should check if address is creator", async function () {
+      expect(await factory.isCreator(owner.address)).to.be.true;
+      expect(await factory.isCreator(creator1.address)).to.be.false;
+
+      await factory.addCreator(creator1.address);
+      expect(await factory.isCreator(creator1.address)).to.be.true;
+    });
+
+    it("Should get all creators", async function () {
+      await factory.addCreator(creator1.address);
+      await factory.addCreator(creator2.address);
+
+      const creators = await factory.getAllCreators();
+      expect(creators.length).to.be.greaterThanOrEqual(2);
+      expect(creators).to.include(creator1.address);
+      expect(creators).to.include(creator2.address);
+    });
+
+    it("Should check if address is owner", async function () {
+      expect(await factory.isOwner(owner.address)).to.be.true;
+      expect(await factory.isOwner(creator1.address)).to.be.false;
+    });
+  });
+
+  describe("System Pause/Unpause", function () {
+    it("Should allow owner to pause system", async function () {
+      const tx = await factory.pause();
+      const receipt = await tx.wait();
+      const block = await ethers.provider.getBlock(receipt.blockNumber);
+
+      await expect(tx)
+        .to.emit(factory, "SystemPaused")
+        .withArgs(owner.address, block.timestamp);
+
+      expect(await factory.isPaused()).to.be.true;
+    });
+
+    it("Should not allow non-owner to pause", async function () {
+      await expect(
+        factory.connect(nonOwner).pause()
+      ).to.be.revertedWithCustomError(factory, "OnlyOwner");
+    });
+
+    it("Should not allow pausing already paused system", async function () {
+      await factory.pause();
+
+      await expect(
+        factory.pause()
+      ).to.be.revertedWithCustomError(factory, "AlreadyPaused");
+    });
+
+    it("Should allow owner to unpause system", async function () {
+      await factory.pause();
+
+      const tx = await factory.unpause();
+      const receipt = await tx.wait();
+      const block = await ethers.provider.getBlock(receipt.blockNumber);
+
+      await expect(tx)
+        .to.emit(factory, "SystemUnpaused")
+        .withArgs(owner.address, block.timestamp);
+
+      expect(await factory.isPaused()).to.be.false;
+    });
+
+    it("Should not allow non-owner to unpause", async function () {
+      await factory.pause();
+
+      await expect(
+        factory.connect(nonOwner).unpause()
+      ).to.be.revertedWithCustomError(factory, "OnlyOwner");
+    });
+
+    it("Should not allow unpausing non-paused system", async function () {
+      await expect(
+        factory.unpause()
+      ).to.be.revertedWithCustomError(factory, "NotPaused");
+    });
+
+    it("Should not allow creating election when system is paused", async function () {
+      await factory.pause();
+
+      const currentBlock = await ethers.provider.getBlock("latest");
+      const currentTime = currentBlock.timestamp;
+      const startTime = currentTime + 3600;
+      const endTime = startTime + 86400;
+
+      await expect(
+        factory.createElection(
+          "Test Election",
+          "Test Description",
+          "LOCAL",
+          startTime,
+          endTime,
+          true,
+          "QmTestIPFSCID"
+        )
+      ).to.be.revertedWithCustomError(factory, "SystemIsPaused");
+    });
+
+    it("Should allow creating election after unpause", async function () {
+      await factory.pause();
+      await factory.unpause();
+
+      const currentBlock = await ethers.provider.getBlock("latest");
+      const currentTime = currentBlock.timestamp;
+      const startTime = currentTime + 3600;
+      const endTime = startTime + 86400;
+
+      await factory.createElection(
+        "Test Election",
+        "Test Description",
+        "LOCAL",
+        startTime,
+        endTime,
+        true,
+        "QmTestIPFSCID"
+      );
+
+      expect(await factory.totalElections()).to.equal(1);
     });
   });
 });

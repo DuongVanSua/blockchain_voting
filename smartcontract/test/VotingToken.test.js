@@ -226,7 +226,164 @@ describe("VotingToken Contract", function () {
     it("Should not allow approve", async function () {
       await expect(
         votingToken.connect(recipient).approve(minter.address, ethers.parseEther("10"))
-      ).to.be.revertedWith("Approval not allowed for voting tokens");
+      ).to.be.revertedWith("Approval not allowed for non-transferable tokens");
+    });
+
+    it("Should return zero allowance", async function () {
+      const allowance = await votingToken.allowance(recipient.address, minter.address);
+      expect(allowance).to.equal(0);
+    });
+  });
+
+  describe("Transferable Mode", function () {
+    let spender;
+
+    beforeEach(async function () {
+      [owner, minter, recipient, nonMinter, spender] = await ethers.getSigners();
+      await votingToken.mint(recipient.address, ethers.parseEther("100"));
+      await votingToken.setTransferable(true);
+    });
+
+    it("Should allow owner to enable transfers", async function () {
+      const tx = await votingToken.setTransferable(true);
+      const receipt = await tx.wait();
+      const block = await ethers.provider.getBlock(receipt.blockNumber);
+
+      await expect(tx)
+        .to.emit(votingToken, "TransferabilityChanged")
+        .withArgs(true, owner.address);
+
+      expect(await votingToken.isTransferable()).to.be.true;
+    });
+
+    it("Should allow owner to disable transfers", async function () {
+      await votingToken.setTransferable(true);
+      const tx = await votingToken.setTransferable(false);
+      const receipt = await tx.wait();
+      const block = await ethers.provider.getBlock(receipt.blockNumber);
+
+      await expect(tx)
+        .to.emit(votingToken, "TransferabilityChanged")
+        .withArgs(false, owner.address);
+
+      expect(await votingToken.isTransferable()).to.be.false;
+    });
+
+    it("Should not allow non-owner to set transferable", async function () {
+      await expect(
+        votingToken.connect(nonMinter).setTransferable(true)
+      ).to.be.revertedWith("Only owner can perform this action");
+    });
+
+    it("Should allow transfer when transferable", async function () {
+      const amount = ethers.parseEther("50");
+      const tx = await votingToken.connect(recipient).transfer(minter.address, amount);
+      const receipt = await tx.wait();
+      const block = await ethers.provider.getBlock(receipt.blockNumber);
+
+      await expect(tx)
+        .to.emit(votingToken, "Transfer")
+        .withArgs(recipient.address, minter.address, amount);
+
+      expect(await votingToken.balanceOf(recipient.address)).to.equal(ethers.parseEther("50"));
+      expect(await votingToken.balanceOf(minter.address)).to.equal(amount);
+    });
+
+    it("Should not allow transfer to zero address", async function () {
+      await expect(
+        votingToken.connect(recipient).transfer(ethers.ZeroAddress, ethers.parseEther("10"))
+      ).to.be.revertedWith("Cannot transfer to zero address");
+    });
+
+    it("Should not allow transfer with insufficient balance", async function () {
+      await expect(
+        votingToken.connect(recipient).transfer(minter.address, ethers.parseEther("150"))
+      ).to.be.revertedWith("Insufficient balance");
+    });
+
+    it("Should allow approve when transferable", async function () {
+      const amount = ethers.parseEther("30");
+      const tx = await votingToken.connect(recipient).approve(spender.address, amount);
+      const receipt = await tx.wait();
+      const block = await ethers.provider.getBlock(receipt.blockNumber);
+
+      await expect(tx)
+        .to.emit(votingToken, "Approval")
+        .withArgs(recipient.address, spender.address, amount);
+
+      expect(await votingToken.allowance(recipient.address, spender.address)).to.equal(amount);
+    });
+
+    it("Should not allow approve to zero address", async function () {
+      await expect(
+        votingToken.connect(recipient).approve(ethers.ZeroAddress, ethers.parseEther("10"))
+      ).to.be.revertedWith("Cannot approve zero address");
+    });
+
+    it("Should return correct allowance", async function () {
+      const amount = ethers.parseEther("25");
+      await votingToken.connect(recipient).approve(spender.address, amount);
+      
+      expect(await votingToken.allowance(recipient.address, spender.address)).to.equal(amount);
+      expect(await votingToken.allowance(recipient.address, minter.address)).to.equal(0);
+    });
+
+    it("Should allow transferFrom when transferable and approved", async function () {
+      const amount = ethers.parseEther("40");
+      await votingToken.connect(recipient).approve(spender.address, amount);
+
+      const tx = await votingToken.connect(spender).transferFrom(recipient.address, minter.address, amount);
+      const receipt = await tx.wait();
+      const block = await ethers.provider.getBlock(receipt.blockNumber);
+
+      await expect(tx)
+        .to.emit(votingToken, "Transfer")
+        .withArgs(recipient.address, minter.address, amount);
+
+      expect(await votingToken.balanceOf(recipient.address)).to.equal(ethers.parseEther("60"));
+      expect(await votingToken.balanceOf(minter.address)).to.equal(amount);
+      expect(await votingToken.allowance(recipient.address, spender.address)).to.equal(0);
+    });
+
+    it("Should not allow transferFrom with insufficient allowance", async function () {
+      await votingToken.connect(recipient).approve(spender.address, ethers.parseEther("30"));
+
+      await expect(
+        votingToken.connect(spender).transferFrom(recipient.address, minter.address, ethers.parseEther("50"))
+      ).to.be.revertedWith("Insufficient allowance");
+    });
+
+    it("Should not allow transferFrom with insufficient balance", async function () {
+      await votingToken.connect(recipient).approve(spender.address, ethers.parseEther("150"));
+
+      await expect(
+        votingToken.connect(spender).transferFrom(recipient.address, minter.address, ethers.parseEther("150"))
+      ).to.be.revertedWith("Insufficient balance");
+    });
+
+    it("Should not allow transferFrom from zero address", async function () {
+      await expect(
+        votingToken.connect(spender).transferFrom(ethers.ZeroAddress, minter.address, ethers.parseEther("10"))
+      ).to.be.revertedWith("Cannot transfer from zero address");
+    });
+
+    it("Should not allow transferFrom to zero address", async function () {
+      await votingToken.connect(recipient).approve(spender.address, ethers.parseEther("30"));
+
+      await expect(
+        votingToken.connect(spender).transferFrom(recipient.address, ethers.ZeroAddress, ethers.parseEther("10"))
+      ).to.be.revertedWith("Cannot transfer to zero address");
+    });
+
+    it("Should reduce allowance after transferFrom", async function () {
+      const approveAmount = ethers.parseEther("50");
+      const transferAmount = ethers.parseEther("20");
+      await votingToken.connect(recipient).approve(spender.address, approveAmount);
+
+      await votingToken.connect(spender).transferFrom(recipient.address, minter.address, transferAmount);
+
+      const remainingAllowance = await votingToken.allowance(recipient.address, spender.address);
+      expect(remainingAllowance).to.equal(ethers.parseEther("30"));
     });
   });
 
